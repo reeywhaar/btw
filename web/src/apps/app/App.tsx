@@ -24,6 +24,12 @@ import { pushState } from "@app/push";
 type Silence = { text: string; actionable: boolean } | null;
 
 function silence(registered: boolean): Silence {
+  // Any device at all means nudges are arriving somewhere, so there is nothing to warn
+  // about. The bar means "nothing will arrive anywhere" — not "not on this screen", which
+  // is an ordinary thing for a laptop to be and not worth a standing, undismissible notice
+  // on every visit.
+  if (registered) return null;
+
   switch (pushState()) {
     case "unsupported":
       // Nothing to be done here, by us or by them. Say so and stop.
@@ -49,14 +55,12 @@ function silence(registered: boolean): Silence {
         actionable: true,
       };
     case "ready":
-      // Permission granted, but this browser never registered — a subscription that
-      // failed, or was forgotten from another device.
-      return registered
-        ? null
-        : {
-            text: "This browser is not registered — nudges will not arrive. Register it →",
-            actionable: true,
-          };
+      // Permission granted, but nothing is registered anywhere — a subscription that
+      // failed, or a device forgotten from another browser.
+      return {
+        text: "This browser is not registered — nudges will not arrive. Register it →",
+        actionable: true,
+      };
   }
 }
 

@@ -96,15 +96,37 @@ order things *arrive* in is decided server-side and has nothing to do with where
 this screen. Making the list orderable would be reintroducing the ranking the product is trying
 not to have.
 
+## What is about this browser, and what is about the account
+
+Two facts that look alike and are not. *Can this browser receive a nudge* is about the thing
+you are holding. *Is anything registered at all* is about the account, and is the same answer
+from every screen.
+
+Settings has a section each. **This browser** carries the install gate, the "no Push API"
+notice, the blocked-permission notice and the enable button. **Devices** carries the list,
+`forget`, and `Send one now` — and it is shown whenever there is at least one device,
+whatever the browser in front of you can do.
+
+They were one block, with the device list and the test button nested inside the "permission is
+granted" branch. Opening btw on a laptop that cannot receive push therefore hid the phone that
+can, along with the only button able to reach it: the state of the browser in front of you
+deciding what you were allowed to know about a device somewhere else. `Send one now` sends to
+every device on the account, which is exactly what makes it useful from a browser that can
+receive nothing itself.
+
 ## Saying why nothing will arrive
 
-A standing bar sits above the list whenever nudges cannot reach this browser. It is not
+A standing bar sits above the list when **nothing will arrive anywhere**. It is not
 dismissible: an app that looks like it is working and silently never nudges anybody is the
 failure the whole enable flow exists to prevent, and a banner somebody can dismiss is a failure
 somebody dismisses.
 
-It names the **actual reason**, and only offers the tap when there is something on the other
-end of it:
+Anywhere, not here. One registered device silences it, whatever this browser can do — a laptop
+that cannot receive push is an ordinary thing to be sitting at, not a fault worth a permanent
+notice on every visit.
+
+When there is nothing, it names the **actual reason**, and only offers the tap when there is
+something on the other end of it:
 
 | state | bar | tappable |
 | --- | --- | --- |
@@ -112,7 +134,7 @@ end of it:
 | iOS in a tab | Add btw to your Home Screen to get nudges → | yes |
 | permission denied | Notifications are blocked for this site → | yes |
 | never asked | Nudges are off — nothing will arrive. Turn them on → | yes |
-| granted, unregistered | This browser is not registered. Register it → | yes |
+| granted, nothing registered | This browser is not registered. Register it → | yes |
 
 It said "Turn them on →" for every one of these first, including the ones where there is
 nothing to turn on — so somebody on a browser without push was invited to tap through to a

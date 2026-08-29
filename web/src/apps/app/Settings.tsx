@@ -15,7 +15,8 @@ import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
 export function Settings() {
   return (
     <main className="space-y-10 px-5">
-      <Nudges />
+      <ThisBrowser />
+      <Devices />
       <RhythmPanel />
       <Account />
     </main>
@@ -39,14 +40,26 @@ function Section({
   );
 }
 
-function Nudges() {
+/**
+ * What this browser can do about nudges.
+ *
+ * Split from Devices below on purpose. Everything here is a fact about the browser you are
+ * holding — whether it has a Push API, whether permission was granted, whether it needs
+ * installing first. Everything there is a fact about the account.
+ *
+ * They used to be one block, and the device list and the test button were nested inside the
+ * "permission is granted" branch. That meant opening btw on a laptop that cannot receive
+ * push hid the phone that can, along with the only button that could reach it — the state of
+ * the browser in front of you deciding what you may know about a device somewhere else.
+ */
+function ThisBrowser() {
   const [state, setState] = useState<PushState>(() => pushState());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const client = useQueryClient();
 
   const devices = useQuery({ queryKey: qk.devices, queryFn: getDevices });
-  const test = useMutation({ mutationFn: postNudge });
+  const registered = devices.isSuccess && devices.data.devices.length > 0;
 
   async function turnOn() {
     setBusy(true);
@@ -63,124 +76,137 @@ function Nudges() {
     }
   }
 
+  const button = (label: string) => (
+    <button
+      onClick={turnOn}
+      disabled={busy}
+      className="rounded-lg bg-fg px-4 py-2.5 font-medium text-bg disabled:opacity-50"
+    >
+      {busy ? "asking…" : label}
+    </button>
+  );
+
   return (
-    <Section title="Nudges">
-      {state === "needs-install" && <InstallGate />}
+    <Section title="This browser">
+      <div className="space-y-4">
+        {state === "needs-install" && <InstallGate />}
 
-      {state === "unsupported" && (
-        // Naming the missing capability rather than listing browsers, because the
-        // list would be every mainstream browser of the last few years — which
-        // tells somebody sitting in front of one that cannot do it exactly nothing.
-        <p className="text-sm text-muted">
-          This browser has no Push API, so nudges cannot reach it and nothing
-          will arrive. Everything else here still works — what you write down
-          will be waiting in whatever you next open btw in.
-        </p>
-      )}
+        {state === "unsupported" && (
+          // Naming the missing capability rather than listing browsers, because the list
+          // would be every mainstream browser of the last few years — which tells somebody
+          // sitting in front of one that cannot do it exactly nothing.
+          <p className="text-sm text-muted">
+            This browser has no Push API, so nudges cannot reach it and nothing
+            will arrive here. Everything else still works — what you write down
+            will be waiting in whatever you next open btw in.
+          </p>
+        )}
 
-      {state === "denied" && (
-        <p className="text-sm text-muted">
-          Notifications are blocked for this site. A permission refused once
-          cannot be asked for again — turn it back on in your browser's settings
-          for this site, then reload.
-        </p>
-      )}
+        {state === "denied" && (
+          <p className="text-sm text-muted">
+            Notifications are blocked for this site. A permission refused once
+            cannot be asked for again — turn it back on in your browser&apos;s
+            settings for this site, then reload.
+          </p>
+        )}
 
-      {(state === "off" || state === "ready") && (
-        <div className="space-y-4">
-          {state === "off" && (
-            <>
-              <p className="text-sm text-muted">
-                A few times a day, at hours nobody picked, one of the things you
-                have written down will arrive. You can do it, drop it, or ignore
-                it — ignoring it costs nothing.
-              </p>
+        {state === "off" && (
+          <>
+            <p className="text-sm text-muted">
+              A few times a day, at hours nobody picked, one of the things you
+              have written down will arrive. You can do it, drop it, or ignore
+              it — ignoring it costs nothing.
+            </p>
+            {button("Turn on nudges")}
+          </>
+        )}
+
+        {state === "ready" && !registered && (
+          <>
+            <p className="text-sm text-muted">
+              Permission is granted but this browser is not registered. Press
+              once more.
+            </p>
+            {button("Register this device")}
+          </>
+        )}
+
+        {state === "ready" && registered && (
+          <p className="text-sm text-muted">
+            This browser will receive nudges.
+          </p>
+        )}
+
+        {error && <p className="text-sm text-accent">{error}</p>}
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * The devices this account can be reached on, and the button that proves it.
+ *
+ * Shown whenever there is at least one, whatever the browser in front of you can do. A
+ * laptop with no Push API is still the place somebody manages their phone from — and is
+ * often the more comfortable place to do it.
+ */
+function Devices() {
+  const client = useQueryClient();
+  const devices = useQuery({ queryKey: qk.devices, queryFn: getDevices });
+  const test = useMutation({ mutationFn: postNudge });
+
+  if (!devices.isSuccess || devices.data.devices.length === 0) return null;
+
+  return (
+    <Section title="Devices">
+      <div className="space-y-4">
+        <ul className="space-y-2 text-sm">
+          {devices.data.devices.map((d) => (
+            <li key={d.id} className="flex items-center justify-between gap-3">
+              <span className="text-muted">{d.label || "a browser"}</span>
               <button
-                onClick={turnOn}
-                disabled={busy}
-                className="rounded-lg bg-fg px-4 py-2.5 font-medium text-bg disabled:opacity-50"
+                onClick={async () => {
+                  await deleteDevicesById(d.id);
+                  await client.invalidateQueries({ queryKey: qk.devices });
+                }}
+                className="text-faint underline-offset-4 hover:text-accent hover:underline"
               >
-                {busy ? "asking…" : "Turn on nudges"}
+                forget
               </button>
-            </>
+            </li>
+          ))}
+        </ul>
+
+        <div>
+          {/* The button that proves the chain — permission, subscription, VAPID,
+              encryption, service worker, notification — in one press. It stays in the
+              product, because setting up a new phone asks the same question.
+
+              It sends to every device on the account, not to this one, which is what makes
+              it useful from a browser that cannot receive anything itself. */}
+          <button
+            onClick={() => test.mutate()}
+            disabled={test.isPending}
+            className="rounded-lg border border-line px-4 py-2.5 text-sm text-muted hover:border-line-strong hover:text-fg disabled:opacity-50"
+          >
+            {test.isPending ? "sending…" : "Send one now"}
+          </button>
+          {test.isSuccess && !test.data.sent && (
+            <p className="pt-2 text-sm text-faint">
+              Nothing to send: everything is finished, or was raised too
+              recently.
+            </p>
           )}
-
-          {state === "ready" &&
-            devices.data &&
-            devices.data.devices.length > 0 && (
-              <ul className="space-y-2 text-sm">
-                {devices.data.devices.map((d) => (
-                  <li
-                    key={d.id}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <span className="text-muted">{d.label || "a browser"}</span>
-                    <button
-                      onClick={async () => {
-                        await deleteDevicesById(d.id);
-                        await client.invalidateQueries({
-                          queryKey: qk.devices,
-                        });
-                      }}
-                      className="text-faint underline-offset-4 hover:text-accent hover:underline"
-                    >
-                      forget
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-          {state === "ready" &&
-            devices.isSuccess &&
-            devices.data.devices.length === 0 && (
-              <>
-                <p className="text-sm text-muted">
-                  Permission is granted but this browser is not registered.
-                  Press once more.
-                </p>
-                <button
-                  onClick={turnOn}
-                  disabled={busy}
-                  className="rounded-lg bg-fg px-4 py-2.5 font-medium text-bg disabled:opacity-50"
-                >
-                  Register this device
-                </button>
-              </>
-            )}
-
-          {state === "ready" && (
-            <div>
-              {/* The button that proves the chain — permission, subscription, VAPID,
-                  encryption, service worker, notification — in one press. It stays in the
-                  product, because setting up a new phone asks the same question. */}
-              <button
-                onClick={() => test.mutate()}
-                disabled={test.isPending}
-                className="rounded-lg border border-line px-4 py-2.5 text-sm text-muted hover:border-line-strong hover:text-fg disabled:opacity-50"
-              >
-                {test.isPending ? "sending…" : "Send one now"}
-              </button>
-              {test.isSuccess && !test.data.sent && (
-                <p className="pt-2 text-sm text-faint">
-                  Nothing to send: everything is finished, or was raised too
-                  recently.
-                </p>
-              )}
-              {test.isSuccess && test.data.sent && (
-                <p className="pt-2 text-sm text-faint">
-                  Sent. It should be on its way.
-                </p>
-              )}
-              {test.error && (
-                <p className="pt-2 text-sm text-accent">{test.error.message}</p>
-              )}
-            </div>
+          {test.isSuccess && test.data.sent && (
+            <p className="pt-2 text-sm text-faint">
+              Sent. It should be on its way.
+            </p>
           )}
-
-          {error && <p className="text-sm text-accent">{error}</p>}
+          {test.error && (
+            <p className="pt-2 text-sm text-accent">{test.error.message}</p>
+          )}
         </div>
-      )}
+      </div>
     </Section>
   );
 }
