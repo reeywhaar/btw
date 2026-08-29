@@ -116,7 +116,7 @@ func newRig(t *testing.T) *rig {
 		scheduler: New(st, sender, slog.New(slog.NewTextHandler(io.Discard, nil))),
 	}
 	if _, err := st.RegisterDevice(t.Context(), p.ID, srv.URL, b64.EncodeToString(r.uaPublic),
-		b64.EncodeToString(auth), "the test phone"); err != nil {
+		b64.EncodeToString(auth), "the test phone", "c_test"); err != nil {
 		t.Fatalf("RegisterDevice(): %v", err)
 	}
 	return r

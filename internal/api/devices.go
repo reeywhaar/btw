@@ -52,11 +52,14 @@ func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
 		P256dh   string `json:"p256dh"`
 		Auth     string `json:"auth"`
 		Label    string `json:"label"`
+		// Stable per browser, minted by the client and kept in localStorage. It is what
+		// makes a rotated subscription replace its row instead of adding one.
+		ClientID string `json:"client_id"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	d, err := s.store.RegisterDevice(r.Context(), principal(r).ID, req.Endpoint, req.P256dh, req.Auth, req.Label)
+	d, err := s.store.RegisterDevice(r.Context(), principal(r).ID, req.Endpoint, req.P256dh, req.Auth, req.Label, req.ClientID)
 	if err != nil {
 		s.fail(w, r, err)
 		return

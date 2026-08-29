@@ -100,6 +100,11 @@ self.addEventListener("pushsubscriptionchange", (event) => {
             p256dh: bytesToBase64Url(subscription.getKey("p256dh")),
             auth: bytesToBase64Url(subscription.getKey("auth")),
             label: "",
+            // The same stable browser id the app uses, read straight from storage — a
+            // worker cannot import from the bundle. Without it this re-subscription would
+            // land as a second device and the browser would start showing every nudge
+            // twice, which is the exact bug this event is supposed to repair.
+            client_id: (await clientID()) || "",
           }),
         });
       } catch {
@@ -108,6 +113,33 @@ self.addEventListener("pushsubscriptionchange", (event) => {
     })(),
   );
 });
+
+/**
+ * The browser id the app keeps in localStorage.
+ *
+ * A worker has no localStorage of its own, so it asks a window for it. When no window is
+ * open there is nobody to ask and the id is empty, which collapses nothing server-side —
+ * the safe direction, since a wrong id would delete a device somebody is still using.
+ */
+async function clientID() {
+  const windows = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  for (const client of windows) {
+    try {
+      return await new Promise((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = (e) => resolve(e.data);
+        setTimeout(() => resolve(""), 500);
+        client.postMessage({ ask: "client-id" }, [channel.port2]);
+      });
+    } catch {
+      // Try the next window.
+    }
+  }
+  return "";
+}
 
 function base64UrlToBytes(value) {
   const padded =

@@ -56,6 +56,34 @@ export function pushState(): PushState {
   return "off";
 }
 
+/**
+ * A stable name for *this browser*, kept in localStorage.
+ *
+ * A push endpoint identifies a subscription, not a browser, and browsers replace
+ * subscriptions on their own. Without something stable underneath, a rotated subscription
+ * arrived at the server as a new device beside the old one — both live at the push service,
+ * so one nudge went out twice and one browser showed two notifications.
+ *
+ * localStorage rather than a cookie: it is per browser profile, which is exactly the grain
+ * a push subscription has. Losing it is harmless — the next registration mints another and
+ * the stale row is left to be deleted when its endpoint finally answers 410.
+ */
+function clientID(): string {
+  const key = "btw.client";
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const minted = crypto.randomUUID();
+    localStorage.setItem(key, minted);
+    return minted;
+  } catch {
+    // Private mode, or storage refused. An empty id collapses nothing on the server, which
+    // is the safe direction: a duplicate row is worse than no deduplication, but an id
+    // shared by two browsers would delete a device somebody is still using.
+    return "";
+  }
+}
+
 /** A name for this device that somebody will recognise in a list. */
 function label(): string {
   const ua = navigator.userAgent;
@@ -116,6 +144,23 @@ async function send(subscription: PushSubscription): Promise<void> {
     p256dh: bytesToBase64Url(subscription.getKey("p256dh")),
     auth: bytesToBase64Url(subscription.getKey("auth")),
     label: label(),
+    client_id: clientID(),
+  });
+}
+
+/**
+ * Answers the worker when it asks who this browser is.
+ *
+ * A worker has no localStorage, and the one place the id lives is here. It only ever asks
+ * during pushsubscriptionchange, where getting it wrong means the re-subscription lands as
+ * a second device and every nudge starts arriving twice.
+ */
+export function answerClientIdRequests(): void {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if ((event.data as { ask?: string } | null)?.ask === "client-id") {
+      event.ports[0]?.postMessage(clientID());
+    }
   });
 }
 

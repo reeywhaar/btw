@@ -407,7 +407,7 @@ func TestADeviceEndpointNeverComesBackOut(t *testing.T) {
 	p := h.signIn()
 
 	const endpoint = "https://push.example.com/very-secret-capability"
-	if _, err := h.store.RegisterDevice(h.Context(), p.ID, endpoint, "k", "s", "phone"); err != nil {
+	if _, err := h.store.RegisterDevice(h.Context(), p.ID, endpoint, "k", "s", "phone", ""); err != nil {
 		t.Fatalf("RegisterDevice(): %v", err)
 	}
 

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import "@app/main.css";
 import { App } from "@app/islands/app/App";
-import { refresh } from "@app/push";
+import { answerClientIdRequests, refresh } from "@app/push";
 
 const client = new QueryClient({
   defaultOptions: {
@@ -21,6 +21,10 @@ const client = new QueryClient({
 // endpoint without asking, and this is what stops that ending in somebody quietly never
 // being nudged again.
 void refresh();
+
+// The worker asks who this browser is when it re-subscribes on its own. Nothing else
+// listens, and without an answer that re-subscription lands as a second device.
+answerClientIdRequests();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

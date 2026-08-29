@@ -139,7 +139,8 @@ short.
 ### `devices`
 
 ```
-id, principal_id, endpoint, p256dh, auth, label, created_at, last_ok_at, failure_count, last_error
+id, principal_id, endpoint, p256dh, auth, label, client_id,
+created_at, last_ok_at, failure_count, last_error
 ```
 
 **`endpoint` is globally unique, not unique per principal, and that is a privacy property
@@ -154,6 +155,11 @@ registering at once produce one row.
 
 `last_error` is kept because "this device stopped receiving" without "and here is what the
 push service said" sends somebody to logs they do not have.
+
+**`client_id` is what makes one browser one row.** An endpoint identifies a subscription
+rather than a browser, and browsers rotate subscriptions unprompted — so upserting on the
+endpoint alone left the old row in place, both live, and one nudge went out twice. See
+[push.md](push.md#one-browser-one-device).
 
 The endpoint **never leaves the process**. It is a capability: anybody holding it and a VAPID
 key can put text on that lock screen. A test asserts it never appears in a response.

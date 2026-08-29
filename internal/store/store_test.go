@@ -215,10 +215,10 @@ func TestRegisteringAnEndpointTakesItFromWhoeverHadIt(t *testing.T) {
 	}
 
 	const endpoint = "https://push.example.com/abc"
-	if _, err := s.RegisterDevice(ctx, a.ID, endpoint, "k", "s", "phone"); err != nil {
+	if _, err := s.RegisterDevice(ctx, a.ID, endpoint, "k", "s", "phone", ""); err != nil {
 		t.Fatalf("RegisterDevice(a): %v", err)
 	}
-	if _, err := s.RegisterDevice(ctx, b.ID, endpoint, "k", "s", "phone"); err != nil {
+	if _, err := s.RegisterDevice(ctx, b.ID, endpoint, "k", "s", "phone", ""); err != nil {
 		t.Fatalf("RegisterDevice(b): %v", err)
 	}
 
@@ -604,5 +604,61 @@ func TestADoneReminderIsNeverDrawnEitherWay(t *testing.T) {
 		if got, _ := s.Candidates(ctx, p.ID, s.Now(), floor); len(got) != 0 {
 			t.Errorf("floor=%v offered a finished reminder", floor)
 		}
+	}
+}
+
+func TestOneBrowserKeepsOneDeviceThroughARotatedSubscription(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	// A browser replaces its subscription on its own — after a permission is re-granted,
+	// after site data is cleared, after pushsubscriptionchange. Upserting on the endpoint
+	// alone left the old row in place, both stayed live at the push service, and one press
+	// of "send one now" sent two pushes.
+	if _, err := s.RegisterDevice(ctx, p.ID, "https://push.example.com/first", "k", "a", "Chrome on Mac", "c_one"); err != nil {
+		t.Fatalf("RegisterDevice(first): %v", err)
+	}
+	if _, err := s.RegisterDevice(ctx, p.ID, "https://push.example.com/second", "k", "a", "Chrome on Mac", "c_one"); err != nil {
+		t.Fatalf("RegisterDevice(second): %v", err)
+	}
+
+	got, err := s.Devices(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Devices(): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("one browser holds %d devices, want 1", len(got))
+	}
+	if got[0].Endpoint != "https://push.example.com/second" {
+		t.Errorf("kept %q, want the current subscription", got[0].Endpoint)
+	}
+}
+
+func TestTwoBrowsersKeepTwoDevices(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	s.RegisterDevice(ctx, p.ID, "https://push.example.com/laptop", "k", "a", "Chrome on Mac", "c_laptop")
+	s.RegisterDevice(ctx, p.ID, "https://push.example.com/phone", "k", "a", "Safari on iPhone", "c_phone")
+
+	if got, _ := s.Devices(ctx, p.ID); len(got) != 2 {
+		t.Fatalf("two browsers hold %d devices, want 2", len(got))
+	}
+}
+
+func TestARowWithNoBrowserIdentityCollapsesNothing(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	// Rows predating the client id have none, and an unknown browser must not be treated as
+	// the same unknown browser as another.
+	s.RegisterDevice(ctx, p.ID, "https://push.example.com/old-a", "k", "a", "a browser", "")
+	s.RegisterDevice(ctx, p.ID, "https://push.example.com/old-b", "k", "a", "a browser", "")
+
+	if got, _ := s.Devices(ctx, p.ID); len(got) != 2 {
+		t.Fatalf("empty client ids collapsed to %d rows, want 2 left alone", len(got))
 	}
 }

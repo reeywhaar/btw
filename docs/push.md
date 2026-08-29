@@ -129,7 +129,13 @@ find at a stable address.
   somebody wrote is the whole message; a title like "Reminder" above it is a word nobody needs
   to read twice. One tag for everything, so a second notification replaces the first on screen
   rather than stacking — it pairs with the `Topic` header, which does the same thing one hop
-  earlier.
+  earlier. Verified by delivering three pushes to a real worker and counting what is on
+  screen: one, carrying the newest text and the newest nudge id.
+
+  `renotify: true` is load-bearing twice over. It re-alerts rather than swapping the text
+  silently, which is what a reminder wants — and because the spec refuses `renotify` without
+  a `tag`, deleting the tag throws a `TypeError` instead of quietly stacking notifications
+  again.
 - **`notificationclick`** → `POST /api/nudges/{id}/{done|drop}`, then focus or open the app.
   Same-origin from a worker, so the session cookie rides along under `SameSite=Lax` and
   `Sec-Fetch-Site` says `same-origin` — which is why the CSRF guard needs no exception for it.
@@ -158,6 +164,31 @@ So the rule is: **every action a notification offers must also be reachable by t
 notification, and again in the list.** A plain tap with no action falls through to focusing or
 opening the app, and the same Done and Drop sit on every row. The buttons are a shortcut for
 the platforms that render them, never the only way to answer.
+
+## One browser, one device
+
+An endpoint identifies a **subscription**, not a browser, and browsers replace subscriptions
+on their own — after a permission is re-granted, after site data is cleared, after a
+`pushsubscriptionchange`. Registering upserts on the endpoint, so a rotated subscription
+arrived as a *new row beside the old one*, both stayed live at the push service, and one
+press of "send one now" sent two pushes. One browser, two notifications.
+
+Neither the `Topic` header nor the notification tag can help with that. Both collapse
+messages within one subscription, and this is two.
+
+So a device also carries a **client id**: a UUID the app mints once and keeps in
+localStorage. Registering deletes any other row for that account with the same client id, so
+a rotated subscription replaces its row rather than joining it.
+
+- **localStorage rather than a cookie**, because it is per browser profile, which is exactly
+  the grain a push subscription has.
+- **Losing it is harmless.** The next registration mints another; the stale row waits to be
+  deleted when its endpoint answers `410`.
+- **Empty is never matched.** Rows from before the column existed have no browser to belong
+  to, and an unknown browser must not collapse another unknown browser's row.
+- The **service worker asks a window** for the id when it re-subscribes on its own, since a
+  worker has no localStorage. With no window open the answer is empty, which collapses
+  nothing — the safe direction, because a wrong id would delete a device somebody is using.
 
 ## What the push service learns
 

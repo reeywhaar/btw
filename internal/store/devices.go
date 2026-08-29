@@ -19,6 +19,7 @@ type Device struct {
 	P256dh       string
 	Auth         string
 	Label        string
+	ClientID     string
 	CreatedAt    time.Time
 	LastOKAt     time.Time
 	FailureCount int
@@ -38,7 +39,7 @@ const MaxDeviceLabel = 100
 // subscription, and if somebody signs out and somebody else signs in, the same endpoint is
 // offered again. Scoped per principal, both rows would live and the first person's
 // reminders would arrive on a device the second person is holding.
-func (s *Store) RegisterDevice(ctx context.Context, principalID, endpoint, p256dh, auth, label string) (Device, error) {
+func (s *Store) RegisterDevice(ctx context.Context, principalID, endpoint, p256dh, auth, label, clientID string) (Device, error) {
 	switch {
 	case strings.TrimSpace(endpoint) == "":
 		return Device{}, Invalid("a subscription needs an endpoint")
@@ -52,6 +53,26 @@ func (s *Store) RegisterDevice(ctx context.Context, principalID, endpoint, p256d
 	if len([]rune(label)) > MaxDeviceLabel {
 		label = string([]rune(label)[:MaxDeviceLabel])
 	}
+	if len([]rune(clientID)) > MaxDeviceLabel {
+		return Device{}, Invalid("that client id is too long")
+	}
+
+	// One browser, one row.
+	//
+	// An endpoint identifies a subscription rather than a browser, and browsers replace
+	// subscriptions on their own. Upserting on the endpoint alone left the old row in place,
+	// both were live at the push service, and one press sent two pushes — which is one
+	// browser showing two notifications, and is what this line exists to stop.
+	//
+	// Empty is never matched: a row from before this column existed has no browser to
+	// belong to, and must not collapse somebody else's.
+	if clientID != "" {
+		if _, err := s.main.ExecContext(ctx,
+			`DELETE FROM devices WHERE principal_id = ? AND client_id = ? AND endpoint <> ?`,
+			principalID, clientID, endpoint); err != nil {
+			return Device{}, fmt.Errorf("replace device: %w", err)
+		}
+	}
 
 	now := s.Now().Truncate(time.Second)
 	d := Device{
@@ -61,6 +82,7 @@ func (s *Store) RegisterDevice(ctx context.Context, principalID, endpoint, p256d
 		P256dh:      p256dh,
 		Auth:        auth,
 		Label:       label,
+		ClientID:    clientID,
 		CreatedAt:   now,
 	}
 	// ON CONFLICT rather than a read-then-write, so two tabs registering at once produce
@@ -68,17 +90,18 @@ func (s *Store) RegisterDevice(ctx context.Context, principalID, endpoint, p256d
 	// endpoint moves to whoever registered it last, and its failure history is reset
 	// because it is now somebody else's device.
 	err := s.main.QueryRowContext(ctx,
-		`INSERT INTO devices (id, principal_id, endpoint, p256dh, auth, label, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO devices (id, principal_id, endpoint, p256dh, auth, label, client_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (endpoint) DO UPDATE SET
 		   principal_id  = excluded.principal_id,
 		   p256dh        = excluded.p256dh,
 		   auth          = excluded.auth,
 		   label         = excluded.label,
+		   client_id     = excluded.client_id,
 		   failure_count = 0,
 		   last_error    = ''
 		 RETURNING id, created_at`,
-		d.ID, d.PrincipalID, d.Endpoint, d.P256dh, d.Auth, d.Label, unix(d.CreatedAt)).
+		d.ID, d.PrincipalID, d.Endpoint, d.P256dh, d.Auth, d.Label, d.ClientID, unix(d.CreatedAt)).
 		Scan(&d.ID, new(int64))
 	if err != nil {
 		return Device{}, fmt.Errorf("register device: %w", err)
@@ -89,7 +112,7 @@ func (s *Store) RegisterDevice(ctx context.Context, principalID, endpoint, p256d
 // Devices lists one person's.
 func (s *Store) Devices(ctx context.Context, principalID string) ([]Device, error) {
 	rows, err := s.main.QueryContext(ctx,
-		`SELECT id, principal_id, endpoint, p256dh, auth, label, created_at, last_ok_at, failure_count, last_error
+		`SELECT id, principal_id, endpoint, p256dh, auth, label, client_id, created_at, last_ok_at, failure_count, last_error
 		   FROM devices WHERE principal_id = ? ORDER BY id`, principalID)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
@@ -104,7 +127,7 @@ func (s *Store) Devices(ctx context.Context, principalID string) ([]Device, erro
 			lastOK sql.NullInt64
 		)
 		if err := rows.Scan(&d.ID, &d.PrincipalID, &d.Endpoint, &d.P256dh, &d.Auth, &d.Label,
-			&cre, &lastOK, &d.FailureCount, &d.LastError); err != nil {
+			&d.ClientID, &cre, &lastOK, &d.FailureCount, &d.LastError); err != nil {
 			return nil, fmt.Errorf("read device: %w", err)
 		}
 		d.CreatedAt = time.Unix(cre, 0).UTC()
