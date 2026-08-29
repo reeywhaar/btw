@@ -5,9 +5,9 @@ import { getAuthMe } from "@app/api/actions/auth";
 import { getDevices } from "@app/api/actions/devices";
 import { qk } from "@app/api/keys";
 import { ApiError } from "@app/api/transport";
-import { Reminders } from "@app/apps/app/Reminders";
-import { useRoute } from "@app/apps/app/route";
-import { Settings } from "@app/apps/app/Settings";
+import { Reminders } from "@app/islands/app/Reminders";
+import { useRoute } from "@app/islands/app/route";
+import { Settings } from "@app/islands/app/Settings";
 import { pushState } from "@app/push";
 
 /**

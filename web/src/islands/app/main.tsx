@@ -2,8 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import "@app/index.css";
-import { App } from "@app/apps/app/App";
+import "@app/main.css";
+import { App } from "@app/islands/app/App";
 import { refresh } from "@app/push";
 
 const client = new QueryClient({

@@ -5,6 +5,32 @@ React 19, TanStack Query 5, Tailwind 4, TypeScript 7, Vite 8, Prettier. `@app/*`
 The interface is a text field and a list. Most of what follows is about what is deliberately
 absent from it.
 
+## Layout
+
+```
+web/
+  index.html, login.html      one shell per island
+  public/                     sw.js, the manifest, icons — copied verbatim
+  src/
+    api/
+      transport.ts            the only file that mentions fetch
+      keys.ts                 every query key, in one object
+      actions/                one module per API root
+    components/               the shared primitives, below
+    islands/
+      app/                    the list, settings, routing
+      login/                  signing in, accepting an invitation
+    push.ts                   subscribing, and what this browser can do
+    main.css                  tokens, and the two rules that are not utilities
+```
+
+**islands, not apps.** An island is what these are — one shell, one entry, one audience, no
+routing between them — and `apps/` said nothing except that it held more than one thing.
+
+`main.css` rather than `index.css` for the same reason `main.tsx` is not `index.tsx`: an
+`index` is a directory's default file, a convention from a time when the file name was the
+URL. Nothing here resolves by directory.
+
 ## Two entries
 
 | entry | audience | ships |
@@ -41,6 +67,21 @@ One detail worth keeping: **returning to a screen we pushed from calls `history.
 system gesture to walk through before it can leave the app. Entries this island pushed are
 marked in `history.state`, so a *deep link* straight to `/settings` — which has nothing behind
 it — pushes `/` instead of reversing out of btw entirely.
+
+## Components against islands
+
+`src/components/` holds the pieces with no opinion about what they are for: `Section`, `Row`,
+`Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
+btw is — `Reminders`, `ThisBrowser`, `Devices`, `RhythmPanel`, `Login`.
+
+The test for the boundary is whether a piece would need rewriting for a different product.
+`Field` would not. `RhythmPanel` is nothing but this product's opinions, and lives in the
+island that shows it.
+
+`Button` has three variants and choosing between them is the whole decision: `solid` for the
+one thing a screen wants you to do, `quiet` for available but not urged, `link` for an action
+that reads as a sentence. It is inverted rather than coloured — `bg-fg text-bg` is
+dark-on-light in light mode and light-on-dark in dark mode, from one pair of classes.
 
 ## The API layer
 

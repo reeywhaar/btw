@@ -6,6 +6,13 @@ import { deleteDevicesById, getDevices } from "@app/api/actions/devices";
 import { postNudges } from "@app/api/actions/nudges";
 import { getRhythm, patchRhythm } from "@app/api/actions/rhythm";
 import { qk } from "@app/api/keys";
+import { Button } from "@app/components/Button";
+import { Check } from "@app/components/Check";
+import { Field } from "@app/components/Field";
+import { Note } from "@app/components/Note";
+import { Row } from "@app/components/Row";
+import { Section } from "@app/components/Section";
+import { Select } from "@app/components/Select";
 import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
 
 export function Settings() {
@@ -18,107 +25,6 @@ export function Settings() {
     </main>
   );
 }
-
-/* ---------------------------------------------------------------------------------------
- * The pieces every settings screen is built from.
- *
- * A settings screen is rows of the same shape, and the shape has to be written down once.
- * Left to lay themselves out, rows drift: one uses justify-between, the next puts its
- * control inline, and on a 560px column the first reads as a label and a control five
- * hundred pixels apart while the second wraps its last select onto a line of its own.
- *
- * So a Section is a bordered, divided group — which is what makes it visible where one ends
- * and the next begins — and every row inside it is a Row.
- * ------------------------------------------------------------------------------------- */
-
-function Section({
-  title,
-  children,
-  footer,
-}: {
-  title: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  return (
-    <section>
-      <h2 className="px-1 pb-2 text-xs font-medium tracking-widest text-faint uppercase">
-        {title}
-      </h2>
-      <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-        {children}
-      </div>
-      {footer && <div className="px-1 pt-2">{footer}</div>}
-    </section>
-  );
-}
-
-/** One row in a section. Everything inside a Section is one of these. */
-function Row({ children }: { children: React.ReactNode }) {
-  return <div className="px-4 py-3">{children}</div>;
-}
-
-/**
- * A row that names a setting and carries the control that changes it.
- *
- * The hairline above and below is what carries the eye from the name on the left to the
- * control on the right. Without it the two read as unrelated at this column width, which is
- * the whole reason this component exists rather than a flex on each row.
- *
- * Anything needing the full width — a pair of selects, an explanation — goes underneath.
- */
-function Field({
-  label,
-  control,
-  children,
-}: {
-  label: string;
-  control?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  return (
-    <Row>
-      <div className="flex min-h-9 items-center justify-between gap-4">
-        <span className="text-sm text-fg">{label}</span>
-        {control}
-      </div>
-      {children && <div className="space-y-2 pt-3">{children}</div>}
-    </Row>
-  );
-}
-
-/** Explanatory text. Never a label, never an action. */
-function Note({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-faint">{children}</p>;
-}
-
-function Check({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <input
-      type="checkbox"
-      checked={checked}
-      onChange={(e) => onChange(e.target.checked)}
-      className="size-5 shrink-0 accent-accent"
-    />
-  );
-}
-
-const solidButton =
-  "rounded-lg bg-fg px-4 py-2.5 text-sm font-medium text-bg disabled:opacity-50";
-const quietButton =
-  "rounded-lg border border-line px-4 py-2.5 text-sm text-muted hover:border-line-strong hover:text-fg disabled:opacity-50";
-const linkButton =
-  "text-left text-sm text-muted underline-offset-4 hover:text-fg hover:underline";
-const selectClass =
-  "rounded-md border border-line bg-bg px-3 py-2 text-fg disabled:text-faint disabled:opacity-50";
-
-/* ------------------------------------------------------------------------------------- */
 
 /**
  * What this browser can do about nudges.
@@ -157,9 +63,9 @@ function ThisBrowser() {
 
   const enableButton = (label: string) => (
     <Row>
-      <button onClick={turnOn} disabled={busy} className={solidButton}>
+      <Button onClick={turnOn} disabled={busy}>
         {busy ? "asking…" : label}
-      </button>
+      </Button>
     </Row>
   );
 
@@ -272,13 +178,13 @@ function Devices() {
 
             It sends to every device on the account, not to this one, which is what makes it
             useful from a browser that can receive nothing itself. */}
-        <button
+        <Button
+          variant="quiet"
           onClick={() => test.mutate()}
           disabled={test.isPending}
-          className={quietButton}
         >
           {test.isPending ? "sending…" : "Send one now"}
-        </button>
+        </Button>
         {test.isSuccess && !test.data.sent && (
           <div className="pt-2">
             <Note>
@@ -361,10 +267,9 @@ function RhythmPanel() {
       <Field
         label="A day holds"
         control={
-          <select
+          <Select
             value={r.budget}
             onChange={(e) => save.mutate({ budget: Number(e.target.value) })}
-            className={selectClass}
           >
             {/* Able to render the value it already holds. Switching the window back on can
                 leave a budget above what that window takes; the save is refused with a
@@ -378,7 +283,7 @@ function RhythmPanel() {
                 </option>
               ),
             )}
-          </select>
+          </Select>
         }
       />
 
@@ -419,12 +324,12 @@ function RhythmPanel() {
         <Field
           label={`Your hours are set in ${r.timezone}`}
           control={
-            <button
+            <Button
+              variant="link"
               onClick={() => save.mutate({ timezone: here })}
-              className={linkButton}
             >
               use {here}
-            </button>
+            </Button>
           }
         />
       )}
@@ -448,18 +353,17 @@ function Hour({
   disabled?: boolean;
 }) {
   return (
-    <select
+    <Select
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
-      className={selectClass}
     >
       {Array.from({ length: 25 }, (_, h) => (
         <option key={h} value={h * 60}>
           {String(h).padStart(2, "0")}:00
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 
@@ -467,15 +371,15 @@ function Account() {
   return (
     <Section title="Account">
       <Row>
-        <button
+        <Button
+          variant="link"
           onClick={async () => {
             await postAuthLogout();
             window.location.replace("/login");
           }}
-          className={linkButton}
         >
           Sign out
-        </button>
+        </Button>
       </Row>
     </Section>
   );
