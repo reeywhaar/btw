@@ -71,7 +71,7 @@ it — pushes `/` instead of reversing out of btw entirely.
 ## Components against islands
 
 `src/components/` holds the pieces with no opinion about what they are for: `Section`, `Row`,
-`RowButton`, `Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
+`Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
 btw is — `Reminders`, `ThisBrowser`, `Devices`, `RhythmPanel`, `Login`.
 
 The test for the boundary is whether a piece would need rewriting for a different product.
@@ -83,13 +83,12 @@ one thing a screen wants you to do, `quiet` for available but not urged, `link` 
 that reads as a sentence. It is inverted rather than coloured — `bg-fg text-bg` is
 dark-on-light in light mode and light-on-dark in dark mode, from one pair of classes.
 
-`RowButton` is the fourth case: a row that *is* the button. Sign out was a link-styled
-`Button` inside a `Row`, which put a small piece of text in the corner of a large bordered
-card — so the card read as the affordance and the text did not, and nothing said where to
-press. The press target is now the row itself: full width, its own padding, a hover that
-fills it. Its `danger` variant exists for actions worth a second of hesitation; signing out
-is not one, since you sign back in, so it stays the ordinary colour and the accent keeps
-meaning something.
+A button sized to its content is what makes it read as one. Sign out was a `link` variant,
+which rendered as bare text adrift in a bordered card and looked like a button that did not
+work. Widening the press target to fill the row does not fix that — a full-width control with
+its label hard against the left edge still reads as a stretched box rather than a button. Either
+it hugs its content or its label is centred; the two are what make a shape look pressable, and
+`quiet` gives the first.
 
 ## The API layer
 
