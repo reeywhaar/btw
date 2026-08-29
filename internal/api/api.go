@@ -83,6 +83,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/auth/logout", s.requireSession(s.logout))
 	mux.Handle("GET /api/auth/me", s.requireSession(s.me))
 
+	// An address the account can be recovered through. Under /api/auth because that is what
+	// it recovers, and because it is the same subject as everything else here.
+	mux.Handle("GET /api/auth/recovery", s.requireSession(s.getRecovery))
+	mux.Handle("POST /api/auth/recovery", s.requireSession(s.startRecovery))
+	mux.Handle("POST /api/auth/recovery/confirm", s.requireSession(s.confirmRecovery))
+	mux.Handle("DELETE /api/auth/recovery", s.requireSession(s.forgetRecovery))
+
 	mux.HandleFunc("GET /api/push/key", s.pushKey)
 
 	mux.Handle("GET /api/reminders", s.requireSession(s.listReminders))
@@ -105,6 +112,13 @@ func (s *Server) Handler() http.Handler {
 	// rides along under SameSite=Lax and Sec-Fetch-Site says same-origin.
 	mux.Handle("POST /api/nudges/{id}/done", s.requireSession(s.actOnNudge))
 	mux.Handle("POST /api/nudges/{id}/drop", s.requireSession(s.actOnNudge))
+
+	// Administrators only. The mail relay is instance-wide configuration, which is why it
+	// lives here rather than on anybody's own settings.
+	mux.Handle("GET /api/admin/relay", s.requireAdmin(s.getRelay))
+	mux.Handle("PUT /api/admin/relay", s.requireAdmin(s.putRelay))
+	mux.Handle("DELETE /api/admin/relay", s.requireAdmin(s.deleteRelay))
+	mux.Handle("POST /api/admin/relay/test", s.requireAdmin(s.testRelay))
 
 	// A catch-all under /api, so a mistyped path comes back as JSON rather than falling
 	// through to the SPA and reaching a fetch as an HTML document it cannot parse.

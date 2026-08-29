@@ -71,6 +71,7 @@ func exec(sql string) func(Context) error {
 var Main = []Migration{
 	mainInitialSchema,
 	mainRhythmWindowEnabled,
+	mainMail,
 }
 
 // Derived owns what the running process accumulated: sessions, the day's slots, and the

@@ -17,6 +17,7 @@ be seen not to have fixed.
 | [entities.md](entities.md) | The two databases, every table, every invariant |
 | [nudges.md](nudges.md) | When somebody is nudged, and what with |
 | [push.md](push.md) | Web Push: the encryption, the headers, and the iOS problem |
+| [mail.md](mail.md) | The relay, and proving a recovery address |
 | [api_design.md](api_design.md) | HTTP conventions and the full endpoint reference |
 | [backend.md](backend.md) | Go package layout and the rules each package follows |
 | [frontend.md](frontend.md) | Islands, the API layer, routing, theming |

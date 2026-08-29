@@ -40,3 +40,28 @@ export const postAuthInvitesByTokenAccept = (
     method: "POST",
     body: { username, password },
   });
+
+export type Recovery = {
+  /** The proved address, or empty. Never one partway through being proved. */
+  email: string;
+  proved_at: number | null;
+  /** An address a code has been sent to and not yet answered. */
+  pending: string;
+  /** Whether this instance can send mail at all. Not a secret from the people whose
+   *  recovery depends on it. */
+  mail_configured: boolean;
+};
+
+export const getAuthRecovery = () => request<Recovery>("/api/auth/recovery");
+
+export const postAuthRecovery = (email: string) =>
+  request<void>("/api/auth/recovery", { method: "POST", body: { email } });
+
+export const postAuthRecoveryConfirm = (code: string) =>
+  request<{ email: string }>("/api/auth/recovery/confirm", {
+    method: "POST",
+    body: { code },
+  });
+
+export const deleteAuthRecovery = () =>
+  request<void>("/api/auth/recovery", { method: "DELETE" });

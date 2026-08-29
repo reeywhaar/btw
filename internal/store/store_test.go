@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"btw/internal/mail"
 )
 
 // open a store against a temporary file rather than :memory:. WAL behaves differently in
@@ -364,5 +367,185 @@ func TestABudgetIsCheckedAgainstTheWindowThatWillActuallyBeUsed(t *testing.T) {
 	r.WindowEnabled = false
 	if err := s.SetRhythm(ctx, r); err != nil {
 		t.Fatalf("SetRhythm() with no window = %v, want it to fit", err)
+	}
+}
+
+func TestARelayIsRefusedWithoutEncryptionOrHalfCredentials(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	good := mail.Settings{
+		Host: "smtp.example.com", Port: 587, TLS: mail.StartTLS,
+		Username: "postmaster", Password: "hunter2", FromAddress: "btw@example.com",
+	}
+	if err := s.SetSMTP(ctx, good); err != nil {
+		t.Fatalf("SetSMTP(): %v", err)
+	}
+	got, err := s.SMTP(ctx)
+	if err != nil || got.Host != "smtp.example.com" || got.TLS != mail.StartTLS {
+		t.Fatalf("SMTP() = %+v, %v", got, err)
+	}
+
+	for name, bad := range map[string]mail.Settings{
+		"no encryption":        {Host: "h", Port: 25, TLS: "none", FromAddress: "btw@example.com"},
+		"username no password": {Host: "h", Port: 587, TLS: mail.StartTLS, Username: "u", FromAddress: "btw@example.com"},
+		"password no username": {Host: "h", Port: 587, TLS: mail.StartTLS, Password: "p", FromAddress: "btw@example.com"},
+		"unparseable from":     {Host: "h", Port: 587, TLS: mail.StartTLS, FromAddress: "not an address"},
+		"no host":              {Port: 587, TLS: mail.StartTLS, FromAddress: "btw@example.com"},
+	} {
+		if err := s.SetSMTP(ctx, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SetSMTP(%s) = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestAnAddressIsOnlyProvedByItsCode(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	code, err := s.StartRecovery(ctx, p.ID, "misha@example.com")
+	if err != nil {
+		t.Fatalf("StartRecovery(): %v", err)
+	}
+
+	// Until the code comes back the account has no recovery address at all — not a
+	// provisional one — so a flow abandoned anywhere leaves what was there before.
+	if got, _, _ := s.RecoveryAddress(ctx, p.ID); got != "" {
+		t.Fatalf("RecoveryAddress() = %q before confirming, want empty", got)
+	}
+	if got, _ := s.PendingRecovery(ctx, p.ID); got != "misha@example.com" {
+		t.Errorf("PendingRecovery() = %q", got)
+	}
+
+	if _, err := s.ConfirmRecovery(ctx, p.ID, "WRONGCOD"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ConfirmRecovery(wrong) = %v, want ErrInvalid", err)
+	}
+	if _, err := s.ConfirmRecovery(ctx, p.ID, code); err != nil {
+		t.Fatalf("ConfirmRecovery(): %v", err)
+	}
+	if got, _, _ := s.RecoveryAddress(ctx, p.ID); got != "misha@example.com" {
+		t.Errorf("RecoveryAddress() = %q after confirming", got)
+	}
+	// The attempt is spent.
+	if got, _ := s.PendingRecovery(ctx, p.ID); got != "" {
+		t.Errorf("PendingRecovery() = %q after confirming, want empty", got)
+	}
+}
+
+func TestACodeIsForgivingAboutHowItIsTyped(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	code, _ := s.StartRecovery(ctx, p.ID, "misha@example.com")
+	// Read off one screen and typed into another: lower case, a stray space, and the
+	// letters Crockford leaves out because they look like digits.
+	typed := strings.ToLower(code[:4] + " " + code[4:])
+	if _, err := s.ConfirmRecovery(ctx, p.ID, typed); err != nil {
+		t.Fatalf("ConfirmRecovery(%q) for code %q: %v", typed, code, err)
+	}
+}
+
+func TestFiveWrongAnswersThrowTheAttemptAway(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	code, _ := s.StartRecovery(ctx, p.ID, "misha@example.com")
+	for range RecoveryCodeAttempts {
+		s.ConfirmRecovery(ctx, p.ID, "00000000")
+	}
+	// A lockout is a state somebody has to wait out; starting again is faster and no weaker.
+	if _, err := s.ConfirmRecovery(ctx, p.ID, code); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("the right code still worked after %d wrong ones", RecoveryCodeAttempts)
+	}
+	if got, _ := s.PendingRecovery(ctx, p.ID); got != "" {
+		t.Errorf("the attempt survived being exhausted: %q", got)
+	}
+}
+
+func TestACodeExpires(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return now })
+
+	code, _ := s.StartRecovery(ctx, p.ID, "misha@example.com")
+	now = now.Add(RecoveryCodeLifetime + time.Minute)
+	if _, err := s.ConfirmRecovery(ctx, p.ID, code); !errors.Is(err, ErrInvalid) {
+		t.Fatal("an expired code was accepted")
+	}
+}
+
+func TestStartingAgainReplacesTheAttempt(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	first, _ := s.StartRecovery(ctx, p.ID, "misha@example.com")
+	second, _ := s.StartRecovery(ctx, p.ID, "misha@example.com")
+
+	// Two live codes for one account is two chances at the same guess.
+	if _, err := s.ConfirmRecovery(ctx, p.ID, first); !errors.Is(err, ErrInvalid) {
+		t.Error("the superseded code still worked")
+	}
+	if _, err := s.ConfirmRecovery(ctx, p.ID, second); err != nil {
+		t.Errorf("the current code did not work: %v", err)
+	}
+}
+
+func TestAnAddressBelongsToWhoeverProvedItLast(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	first := testPrincipal(t, s)
+	second, err := s.CreatePrincipal(ctx, "someone", "a-good-password", RoleUser)
+	if err != nil {
+		t.Fatalf("CreatePrincipal(): %v", err)
+	}
+
+	code, _ := s.StartRecovery(ctx, first.ID, "shared@example.com")
+	if _, err := s.ConfirmRecovery(ctx, first.ID, code); err != nil {
+		t.Fatalf("ConfirmRecovery(first): %v", err)
+	}
+	code, _ = s.StartRecovery(ctx, second.ID, "shared@example.com")
+	if _, err := s.ConfirmRecovery(ctx, second.ID, code); err != nil {
+		t.Fatalf("ConfirmRecovery(second): %v", err)
+	}
+
+	// Whoever can read that inbox today is who recovery through it would actually reach.
+	if got, _, _ := s.RecoveryAddress(ctx, first.ID); got != "" {
+		t.Errorf("the first account kept the address: %q", got)
+	}
+	if got, _, _ := s.RecoveryAddress(ctx, second.ID); got != "shared@example.com" {
+		t.Errorf("the second account did not take it: %q", got)
+	}
+}
+
+func TestAFailedChangeLeavesTheAddressThatWorked(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	code, _ := s.StartRecovery(ctx, p.ID, "old@example.com")
+	if _, err := s.ConfirmRecovery(ctx, p.ID, code); err != nil {
+		t.Fatalf("ConfirmRecovery(): %v", err)
+	}
+
+	// A code that could not be sent leaves nothing waiting — but must not take the address
+	// that already worked with it.
+	if _, err := s.StartRecovery(ctx, p.ID, "new@example.com"); err != nil {
+		t.Fatalf("StartRecovery(): %v", err)
+	}
+	if err := s.DropRecovery(ctx, p.ID); err != nil {
+		t.Fatalf("DropRecovery(): %v", err)
+	}
+	if got, _, _ := s.RecoveryAddress(ctx, p.ID); got != "old@example.com" {
+		t.Errorf("RecoveryAddress() = %q, want the address that still worked", got)
+	}
+	if got, _ := s.PendingRecovery(ctx, p.ID); got != "" {
+		t.Errorf("the abandoned attempt survived: %q", got)
 	}
 }

@@ -61,6 +61,7 @@ func NewSPA(fsys fs.FS) (*SPA, error) {
 		shells: []shell{
 			{prefix: "/login", doc: "login.html"},
 			{prefix: "/invite", doc: "login.html"},
+			{prefix: "/admin", doc: "admin.html"},
 			{prefix: "/", doc: "index.html"},
 		},
 	}

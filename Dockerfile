@@ -13,13 +13,16 @@ WORKDIR /src
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/tsconfig.json web/vite.config.ts ./
-COPY web/index.html web/login.html ./
+# Each entry named. An allowlist cannot accidentally admit web/node_modules or a
+# local data/, and the cost is this line: a new island is a new entry here, which
+# the build fails loudly about rather than shipping a bundle missing a shell.
+COPY web/index.html web/login.html web/admin.html ./
 COPY web/src ./src
 COPY web/public ./public
 RUN npm run build
 # An empty bundle is otherwise invisible until somebody loads the page and gets the
 # placeholder, which looks like a server problem rather than a build one.
-RUN test -s dist/index.html && test -s dist/login.html && test -s dist/sw.js
+RUN test -s dist/index.html && test -s dist/login.html && test -s dist/admin.html && test -s dist/sw.js
 
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 WORKDIR /src

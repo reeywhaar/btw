@@ -461,3 +461,189 @@ func TestANavigationGetsAShellAndAMissingFileDoesNot(t *testing.T) {
 		t.Errorf("missing asset = %s, want 404", resp.Status)
 	}
 }
+
+// signInAs replaces the harness's session with one for a freshly created account of the
+// given role, so the admin gate can be driven from both sides.
+func (h *harness) signInAs(username, role string) store.Principal {
+	h.Helper()
+	p, err := h.store.CreatePrincipal(h.Context(), username, "a-good-password", role)
+	if err != nil {
+		h.Fatalf("CreatePrincipal(): %v", err)
+	}
+	h.cookie = ""
+	resp := h.do("POST", "/api/auth/login", map[string]string{
+		"username": username, "password": "a-good-password",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		h.Fatalf("login as %s = %s", role, resp.Status)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == SessionCookie {
+			h.cookie = c.Value
+		}
+	}
+	return p
+}
+
+func TestAdminRoutesAreForAdministrators(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("ordinary", store.RoleUser)
+
+	// Every admin route, checked as an ordinary account, because the gate is applied at
+	// registration and a route added without it is the failure this guards.
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/api/admin/relay"},
+		{"PUT", "/api/admin/relay"},
+		{"DELETE", "/api/admin/relay"},
+		{"POST", "/api/admin/relay/test"},
+	} {
+		var body any
+		if tc.method == "PUT" || tc.method == "POST" {
+			body = map[string]any{}
+		}
+		resp := h.do(tc.method, tc.path, body)
+		resp.Body.Close()
+		// 403 rather than 404: an administrator route is not a secret, and "you are signed
+		// in, and this is not yours" is the honest answer.
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s %s as a user = %s, want 403", tc.method, tc.path, resp.Status)
+		}
+	}
+}
+
+func TestAdminRoutesStillNeedASession(t *testing.T) {
+	h := newHarness(t)
+	resp := h.do("GET", "/api/admin/relay", nil)
+	defer resp.Body.Close()
+	// Not 403: without a session there is nobody to refuse, and saying "that is for
+	// administrators" to a stranger would say the route exists and they are merely the
+	// wrong person.
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %s, want 401", resp.Status)
+	}
+}
+
+func TestARelayPasswordNeverComesBackOut(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("admin", store.RoleAdmin)
+
+	saved := h.do("PUT", "/api/admin/relay", map[string]any{
+		"host": "smtp.example.com", "port": 587, "tls": "starttls",
+		"username": "postmaster", "password": "hunter2",
+		"from_address": "btw@example.com", "sender_name": "btw",
+	})
+	defer saved.Body.Close()
+	if saved.StatusCode != http.StatusOK {
+		t.Fatalf("PUT = %s", saved.Status)
+	}
+
+	resp := h.do("GET", "/api/admin/relay", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if bytes.Contains(body, []byte("hunter2")) {
+		t.Errorf("the relay password reached the client: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"password_set":true`)) {
+		t.Errorf("password_set missing, so the form cannot tell whether one is stored: %s", body)
+	}
+}
+
+func TestSavingWithoutAPasswordKeepsTheStoredOne(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("admin", store.RoleAdmin)
+
+	h.do("PUT", "/api/admin/relay", map[string]any{
+		"host": "smtp.example.com", "port": 587, "tls": "starttls",
+		"username": "postmaster", "password": "hunter2", "from_address": "btw@example.com",
+	}).Body.Close()
+
+	// Correcting a port must not mean retyping a credential the form was never given.
+	h.do("PUT", "/api/admin/relay", map[string]any{
+		"host": "smtp.example.com", "port": 465, "tls": "implicit",
+		"username": "postmaster", "password": "", "from_address": "btw@example.com",
+	}).Body.Close()
+
+	set, err := h.store.SMTP(h.Context())
+	if err != nil {
+		t.Fatalf("SMTP(): %v", err)
+	}
+	if set.Password != "hunter2" {
+		t.Errorf("password = %q, want the stored one kept", set.Password)
+	}
+	if set.Port != 465 {
+		t.Errorf("port = %d, want the correction applied", set.Port)
+	}
+}
+
+func TestARecoveryAddressCannotBeAddedWithoutARelay(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	resp := h.do("POST", "/api/auth/recovery", map[string]string{"email": "misha@example.com"})
+	defer resp.Body.Close()
+	// Refused before anything is written: an address stored against a relay that does not
+	// exist is a promise the product cannot keep.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %s, want 400", resp.Status)
+	}
+
+	var got struct {
+		Email          string `json:"email"`
+		MailConfigured bool   `json:"mail_configured"`
+	}
+	decodeBody(t, h.do("GET", "/api/auth/recovery", nil), &got)
+	if got.Email != "" {
+		t.Errorf("an address was recorded anyway: %q", got.Email)
+	}
+	// Said out loud, because a button disabled without a reason sends somebody looking for
+	// it in the wrong place.
+	if got.MailConfigured {
+		t.Error("mail_configured is true with no relay")
+	}
+}
+
+func TestARecoveryAddressIsOnlyProvedByItsCode(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+
+	// Written straight to the store: the endpoint that would send the code needs a real
+	// relay, and what is being tested here is what the confirm step does.
+	code, err := h.store.StartRecovery(h.Context(), p.ID, "misha@example.com")
+	if err != nil {
+		t.Fatalf("StartRecovery(): %v", err)
+	}
+
+	var before struct {
+		Email   string `json:"email"`
+		Pending string `json:"pending"`
+	}
+	decodeBody(t, h.do("GET", "/api/auth/recovery", nil), &before)
+	if before.Email != "" || before.Pending != "misha@example.com" {
+		t.Fatalf("before confirming: email=%q pending=%q", before.Email, before.Pending)
+	}
+
+	bad := h.do("POST", "/api/auth/recovery/confirm", map[string]string{"code": "00000000"})
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Errorf("a wrong code = %s, want 400", bad.Status)
+	}
+
+	var confirmed struct {
+		Email string `json:"email"`
+	}
+	decodeBody(t, h.do("POST", "/api/auth/recovery/confirm", map[string]string{"code": code}), &confirmed)
+	if confirmed.Email != "misha@example.com" {
+		t.Fatalf("confirm returned %q", confirmed.Email)
+	}
+
+	resp := h.do("DELETE", "/api/auth/recovery", nil)
+	resp.Body.Close()
+	var after struct {
+		Email string `json:"email"`
+	}
+	decodeBody(t, h.do("GET", "/api/auth/recovery", nil), &after)
+	if after.Email != "" {
+		t.Errorf("the address survived being forgotten: %q", after.Email)
+	}
+}
