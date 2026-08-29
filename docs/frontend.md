@@ -50,7 +50,7 @@ An admin island will be a third entry when there is an admin screen.
 
 ## The URL is not a nicety
 
-Settings is a route, `/settings`, driven by the History API in `apps/app/route.ts`.
+Settings is a route, `/settings`, driven by the History API in `islands/app/route.ts`.
 
 It was `useState` first, and that was a bug rather than a simplification. **An installed web
 app has no address bar and no back button of its own**, so the system back gesture is the only
@@ -272,7 +272,7 @@ nudges, which the standing bar already says.
 ## Theming
 
 Semantic tokens, not colours. Components name what a colour is *for* — `bg-bg`, `text-fg`,
-`text-muted`, `text-faint`, `border-line`, `bg-surface` — and `index.css` is the only file that
+`text-muted`, `text-faint`, `border-line`, `bg-surface` — and `main.css` is the only file that
 says what those are.
 
 Light is the base on `:root`; dark is an override inside `@media (prefers-color-scheme: dark)`.
@@ -301,8 +301,17 @@ disagrees with the page in one of the two modes.
 The inverted button is `bg-fg text-bg`, which is self-correcting: dark-on-light in light mode,
 light-on-dark in dark mode, from one pair of classes.
 
-## Form controls are 16px
+## Form controls are 16px — and only the ones that need to be
 
-One rule in `index.css`, because every input in this application wants it. Anything under 16px
-makes iOS Safari zoom the page on focus, and a page that jumps when you tap the one field it has
-is a page nobody wants to type in twice.
+One rule in `main.css`: `input`, `select` and `textarea` are held at 16px, because anything
+under it makes iOS Safari zoom the page on focus, and a page that jumps when you tap the one
+field it has is a page nobody wants to type in twice.
+
+**`button` was in that list and should not have been.** A button cannot be typed into, so it
+never triggers the zoom — and including it silently overrode `text-sm` on every button in the
+application. It surfaced as a 16px `<button>` beside a 14px `<a>` in the masthead, but it was
+every button on every screen, and nothing at the call site said why.
+
+A rule that broad is not a safety net; it is an override with no visible cause. A blanket
+element rule should cover exactly the elements that need it — and `TextField` carries no text
+size at all for the same reason, since a `text-sm` there would read as if it applied.

@@ -52,7 +52,7 @@ Three direct dependencies. That is the whole list and it should stay short enoug
 ### Not used, deliberately
 
 - **No router.** Two routes and no parameters, driven by the History API in
-  `apps/app/route.ts` — about thirty lines, which is less than the configuration a router
+  `islands/app/route.ts` — about thirty lines, which is less than the configuration a router
   needs. When a third route arrives with a parameter in it, that is when the dependency
   earns its place. Using the URL *at all* is not optional, and why is in
   [frontend.md](frontend.md#the-url-is-not-a-nicety).
