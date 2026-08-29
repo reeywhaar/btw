@@ -1,0 +1,194 @@
+# Frontend
+
+React 19, TanStack Query 5, Tailwind 4, TypeScript 7, Vite 8, Prettier. `@app/*` → `/src`.
+
+The interface is a text field and a list. Most of what follows is about what is deliberately
+absent from it.
+
+## Two entries
+
+| entry | audience | ships |
+| --- | --- | --- |
+| `login.html` | nobody yet | signing in, accepting an invitation |
+| `index.html` | somebody with an account | the list, and settings |
+
+`login.html` earns its place by being the only document an unauthenticated visitor loads: a
+few kilobytes instead of the whole application, and an invitation link handed to somebody who
+has never heard of this instance opens a page about accepting an invitation rather than the
+shell of an app they cannot use.
+
+The Go side decides which shell a navigation gets, from one prefix table in `api/spa.go`:
+`/login` and `/invite` get the login shell, everything else gets the app.
+
+An admin island will be a third entry when there is an admin screen.
+
+## The URL is not a nicety
+
+Settings is a route, `/settings`, driven by the History API in `apps/app/route.ts`.
+
+It was `useState` first, and that was a bug rather than a simplification. **An installed web
+app has no address bar and no back button of its own**, so the system back gesture is the only
+way out of a screen — and a screen that is a `useState` rather than a route answers that
+gesture by closing the application. On the device this product is aimed at, that is the
+difference between a working app and one that feels broken.
+
+Thirty lines and no router. Two routes with no parameters is less than the configuration a
+router needs; when a third route arrives with a parameter in it, that is when the dependency
+earns its place.
+
+One detail worth keeping: **returning to a screen we pushed from calls `history.back()`, not
+`pushState`.** Without it, opening and closing settings four times leaves eight entries for the
+system gesture to walk through before it can leave the app. Entries this island pushed are
+marked in `history.state`, so a *deep link* straight to `/settings` — which has nothing behind
+it — pushes `/` instead of reversing out of btw entirely.
+
+## The API layer
+
+Two files.
+
+`transport.ts` is the only file in the frontend that mentions `fetch`. `actions.ts` is one
+named function per endpoint, mechanically named from the route — see
+[api_design.md](api_design.md#client-naming) — so a call site and a handler find each other by
+grep.
+
+The fuller shape this wants to grow into is four: `transport`, a `dispatcher` that carries an
+`AbortSignal` and throws, a curried `request`, and a `provider` that injects the dispatcher
+through context. All of that exists to let a test render a subtree against a recorded
+transport. Until there is such a test it is four files doing one file's work, so it arrives
+with the first component test and not before.
+
+`credentials: "same-origin"` is set explicitly and there is no other origin. A request that
+needed CORS would be a bug rather than a feature — see
+[api_design.md](api_design.md#there-is-no-cors-middleware).
+
+A refusal is thrown as `ApiError` carrying the server's own sentence, and that sentence is what
+gets rendered. The server writes it for the person who will read it; re-wording it in the
+client would mean maintaining two vocabularies for one failure.
+
+### Queries
+
+Every query key lives in one `qk` object, hierarchically arranged so prefix invalidation is
+correct by construction. `invalidateQueries({ queryKey: ["reminders"] })` catches both the live
+and the finished list without either knowing about the other.
+
+Every read is a server read. There is no client state worth a store: Query owns what came from
+the server, `useState` owns the rest.
+
+## The app is one screen
+
+A text field at the top and a list under it. Typing a sentence and pressing return is the
+entire path to a reminder existing — no dialog, no second step, no required field beyond the
+sentence.
+
+Each row carries **Done** and **Drop**. Both end the reminder; the two words exist because
+they are two different acts. See [conventions.md](conventions.md#done-and-drop).
+
+Interface copy avoids "later" as a label, because doing nothing already means later and a
+button that repeats the default teaches somebody the default is not enough.
+
+### What the list does not have
+
+No count, anywhere. No sort control. No sections for overdue or upcoming, because neither
+exists. No badge on the tab. Finished reminders are behind a link with no number next to it.
+
+Order is by creation, newest first, and that is a display detail rather than a priority — the
+order things *arrive* in is decided server-side and has nothing to do with where they sit on
+this screen. Making the list orderable would be reintroducing the ranking the product is trying
+not to have.
+
+## Saying why nothing will arrive
+
+A standing bar sits above the list whenever nudges cannot reach this browser. It is not
+dismissible: an app that looks like it is working and silently never nudges anybody is the
+failure the whole enable flow exists to prevent, and a banner somebody can dismiss is a failure
+somebody dismisses.
+
+It names the **actual reason**, and only offers the tap when there is something on the other
+end of it:
+
+| state | bar | tappable |
+| --- | --- | --- |
+| no Push API | This browser cannot receive nudges — nothing will arrive here | **no** |
+| iOS in a tab | Add btw to your Home Screen to get nudges → | yes |
+| permission denied | Notifications are blocked for this site → | yes |
+| never asked | Nudges are off — nothing will arrive. Turn them on → | yes |
+| granted, unregistered | This browser is not registered. Register it → | yes |
+
+It said "Turn them on →" for every one of these first, including the ones where there is
+nothing to turn on — so somebody on a browser without push was invited to tap through to a
+screen whose answer was "this browser cannot". **A call to action that leads to a dead end is
+worse than a plain statement**, because it spends somebody's attention before telling them the
+thing they needed to know.
+
+The dead-end case is drawn as a `<p>` in muted colours rather than a `<button>` in accent.
+Drawing it in the same accent as the actionable one is what made it look tappable.
+
+`denied` stays tappable on purpose: a permission refused once cannot be asked for again in
+code, but the settings screen says where the browser's own switch lives, so there *is*
+something there.
+
+## The install gate
+
+Safari delivers Web Push only to a web app added to the Home Screen. Offering a button that
+cannot work there is how somebody taps Enable, sees nothing happen, and never comes back — the
+likeliest way this product fails on the device it is for.
+
+**What decides is a capability test, never a user-agent string:**
+
+```ts
+"serviceWorker" in navigator && "PushManager" in window && "Notification" in window
+```
+
+In an iOS Safari tab `window.PushManager` is not restricted, it is *absent*, and it appears
+once the app is launched from the Home Screen. So one test covers both "too old to help" and
+"would work if installed", and it will keep being right on whatever ships next without anybody
+editing a regex.
+
+The user agent is consulted **only to choose which instructions to draw** — Share → Add to Home
+Screen on iOS, the address-bar control elsewhere. iPadOS 13 and later report a Mac user agent,
+so touch points are what separate an iPad from a laptop.
+
+The rest of the app stays usable behind the gate. Writing a reminder from a laptop browser that
+will never receive one is a legitimate thing to do, and blocking it would block the cheapest way
+to get something out of your head.
+
+Permission is never requested on load. It is a button, on a screen that has already explained
+what will arrive.
+
+## Keeping a device alive
+
+`push.ts` re-registers whatever subscription this browser holds **on every load**. Browsers
+rotate an endpoint without asking, and support for `pushsubscriptionchange` is uneven — so this
+is the mechanism and the event is the optimisation. It costs one request and repairs the case
+that otherwise ends in somebody quietly never being nudged again.
+
+It never throws. A browser that refuses to re-register is a browser that will stop receiving
+nudges, which the standing bar already says.
+
+## Theming
+
+Semantic tokens, not colours. Components name what a colour is *for* — `bg-bg`, `text-fg`,
+`text-muted`, `text-faint`, `border-line`, `bg-surface` — and `index.css` is the only file that
+says what those are.
+
+Light is the base on `:root`; dark is an override inside `@media (prefers-color-scheme: dark)`.
+The alternative was a `dark:` variant on every className in the application, half of which
+somebody eventually forgets.
+
+**The accent flips with everything else.** The dark theme's coral is 2.6:1 on a light
+background — unreadable, and it is the colour used for refusals, which are the words that most
+need reading. Every pairing passes AA in both themes; the weakest is 4.59:1.
+
+`color-scheme` flips too, in a block of its own. Without it a light page renders a dark-mode
+`<select>`, and the first paint flashes the wrong colour before CSS applies. Both HTML entries
+carry two `theme-color` metas for the same reason — one value means the browser chrome
+disagrees with the page in one of the two modes.
+
+The inverted button is `bg-fg text-bg`, which is self-correcting: dark-on-light in light mode,
+light-on-dark in dark mode, from one pair of classes.
+
+## Form controls are 16px
+
+One rule in `index.css`, because every input in this application wants it. Anything under 16px
+makes iOS Safari zoom the page on focus, and a page that jumps when you tap the one field it has
+is a page nobody wants to type in twice.

@@ -1,0 +1,245 @@
+name: publish
+
+on:
+  # Publishing is off for now. Uncomment to resume.
+  # push:
+  #   branches: [main]
+  #
+  # Kept so the workflow has a trigger and can be run by hand — both to retry a failed
+  # publish without an empty commit, and to publish deliberately while the push trigger
+  # above is commented out.
+  workflow_dispatch:
+
+# A newer commit on main should win the race for `latest` rather than queue behind an older
+# one that would overwrite it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Publishing `latest` unconditionally means a broken commit becomes the image everyone
+  # pulls. The tests take under a minute; the gate is worth it.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Set up Node
+        # `current` rather than a pinned major. The image pins node:26 because a build that
+        # ships has to be reproducible; this job only typechecks and formats, so tracking
+        # the current release costs nothing and cannot go stale.
+        uses: actions/setup-node@v6
+        with:
+          node-version: current
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # Deliberately with no frontend build present. The bundle is read from disk at
+      # startup, so a missing one is the placeholder rather than a compile error — and
+      # keeping that true is what lets the Go and web stages not depend on each other.
+      - name: Test the backend
+        run: go test ./...
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Check frontend formatting
+        working-directory: web
+        run: npm run format:check
+
+      - name: Typecheck the frontend
+        working-directory: web
+        run: npm run typecheck
+
+      # No `npm test` yet: the behaviour worth testing is on the Go side and is tested
+      # there. Building is still worth doing here, because a bundle that does not build is a
+      # publish that fails ten minutes later for a reason this job already knew.
+      - name: Build the frontend
+        working-directory: web
+        run: npm run build
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to push to GHCR with the built-in token.
+      packages: write
+
+    outputs:
+      version: ${{ steps.sha.outputs.short }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # Only needed for the final alpine stage's apk step, which is the one thing that runs
+      # on the target architecture. The npm and Go builds are pinned to $BUILDPLATFORM and
+      # cross-compile, so nothing expensive happens under emulation.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Sign in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # No secret to configure: the automatic token can write packages for this repo.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:latest
+          build-args: |
+            VERSION=${{ steps.sha.outputs.short }}
+          platforms: linux/amd64,linux/arm64
+          # `npm ci` is the expensive stage here, and it is cached against
+          # web/package-lock.json alone — an unchanged lockfile is a layer hit even when the
+          # source has changed.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Keeps the package listing to one real platform instead of adding an
+          # "unknown/unknown" attestation entry beside it.
+          provenance: false
+
+      # A step on this job rather than a job of its own, so it reuses the checkout and the
+      # GHCR login above — a fresh package is private, and a separate job would fail to pull
+      # its own image.
+      - name: Smoke-test the published image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:latest
+        run: |
+          docker run --rm "$IMAGE" version
+
+          docker run -d --name smoke \
+            -e BTW_PUBLIC_URL=http://localhost:8080 \
+            -p 8080:80 "$IMAGE"
+
+          for _ in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/healthz | grep -q '"ok":true'
+
+          # An empty database prints an invitation to become its administrator, and that
+          # link is the only way in. A first run that does not produce one is a broken
+          # release however healthy the process looks.
+          docker logs smoke 2>&1 | grep -q '/invite/'
+
+          # Both shells, and neither of them the placeholder. This is the one failure that
+          # would otherwise reach users looking exactly like a successful publish.
+          for shell_path in / /login; do
+            body=$(curl -fsS -H 'Accept: text/html' "http://127.0.0.1:8080$shell_path")
+            if printf '%s' "$body" | grep -q "has not been built"; then
+              echo "$shell_path is serving the placeholder: the bundle did not make it into the image"
+              docker logs smoke
+              exit 1
+            fi
+            printf '%s' "$body" | grep -q '<div id="root">'
+          done
+
+          docker rm -f smoke >/dev/null
+
+      # Its own step, so a failure says "the push chain" rather than "the smoke test".
+      # Without the worker, the manifest or a VAPID key, btw serves a list that will never
+      # nudge anybody — which looks like a working release from every other angle.
+      - name: Smoke-test the push chain
+        run: |
+          docker run -d --name push-smoke \
+            -e BTW_PUBLIC_URL=http://localhost:8081 \
+            -p 8081:80 ghcr.io/${{ github.repository }}:latest
+
+          for _ in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8081/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
+          # Served from the root, because a worker under /assets could not claim the pages
+          # it exists for — and one with a content hash in its name could not be found.
+          curl -fsS http://127.0.0.1:8081/sw.js | grep -q "notificationclick"
+          curl -fsS http://127.0.0.1:8081/manifest.webmanifest | grep -q '"display": *"standalone"'
+
+          # An uncompressed P-256 point is 65 bytes, which is 87 base64url characters.
+          key=$(curl -fsS http://127.0.0.1:8081/api/push/key | sed 's/.*"key":"\([^"]*\)".*/\1/')
+          if [ "${#key}" -ne 87 ]; then
+            echo "the VAPID public key is ${#key} characters, expected 87"
+            exit 1
+          fi
+
+          docker rm -f push-smoke >/dev/null
+
+  # A job of its own rather than steps on `publish`, because a failing `test` *skips*
+  # `publish` rather than failing it, and a step in a job that never starts cannot report
+  # that it never started. This one runs either way and reads the results off `needs`.
+  notify:
+    needs: [test, publish]
+    # Not always(): cancel-in-progress means a newer push kills the run in flight, and being
+    # told that a commit you just superseded was cancelled is noise.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+
+    # The secrets context is not available to `if`, so the presence check goes through env.
+    # Without this, a repo that has not set the secrets yet gets a red run on every push —
+    # a broken notifier should not look like a broken build.
+    env:
+      TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+
+    steps:
+      - name: Notify Telegram on success
+        if: ${{ env.TELEGRAM_TOKEN != '' && env.TELEGRAM_TO != '' && needs.publish.result == 'success' }}
+        uses: appleboy/telegram-action@v1.0.1
+        with:
+          to: ${{ env.TELEGRAM_TO }}
+          token: ${{ env.TELEGRAM_TOKEN }}
+          format: markdown
+          disable_web_page_preview: true
+          message: |
+            🔔 *${{ github.repository }}* published `ghcr.io/${{ github.repository }}:latest`
+
+            version `${{ needs.publish.outputs.version }}` — [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) by ${{ github.actor }}
+
+      - name: Notify Telegram on failure
+        if: ${{ env.TELEGRAM_TOKEN != '' && env.TELEGRAM_TO != '' && needs.publish.result != 'success' }}
+        uses: appleboy/telegram-action@v1.0.1
+        with:
+          to: ${{ env.TELEGRAM_TO }}
+          token: ${{ env.TELEGRAM_TOKEN }}
+          format: markdown
+          disable_web_page_preview: true
+          # Which half broke is the first thing worth knowing: a failing test means the
+          # commit is bad, a failing publish means the commit is fine and the build is not.
+          message: |
+            ❌ *${{ github.repository }}* ${{ needs.test.result != 'success' && 'tests failed' || 'publish failed' }}
+
+            [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) by ${{ github.actor }}
+            [View run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})

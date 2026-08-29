@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+/* Semantic tokens, not colours.
+ *
+ * Every component names what a colour is *for* — bg, fg, muted, line — and this file is
+ * the only place that says what those are. That is what makes a second theme a dozen lines
+ * here rather than a `dark:` variant on every className in the application, half of which
+ * somebody would eventually forget.
+ *
+ * Light is the base and dark is the override, because a stylesheet has to pick one to be
+ * the default and light is what a browser assumes when it is told nothing at all. */
+@theme {
+  --color-bg: #fafaf9;
+  --color-surface: #ffffff;
+  --color-fg: #1c1917;
+  --color-muted: #57534e;
+  --color-faint: #78716c;
+  --color-line: #e0dedb;
+  --color-line-strong: #a8a29e;
+  /* The dark theme's coral is 2.6:1 on a light background — unreadable, and it is used for
+   * refusals, which are the words that most need reading. So the accent flips with
+   * everything else rather than being the one colour that does not. */
+  --color-accent: #c2412d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0b0b0c;
+    --color-surface: #17171a;
+    --color-fg: #fafaf9;
+    --color-muted: #a3a3a3;
+    --color-faint: #8a8a8a;
+    --color-line: #2a2a2e;
+    --color-line-strong: #4a4a50;
+    --color-accent: #f97362;
+  }
+}
+
+/* Tells the browser which way round its own furniture goes: form controls, scrollbars, and
+ * the canvas behind a page that has not painted yet. Without it a light page renders a
+ * dark-mode <select> and the first paint flashes the wrong colour. */
+:root {
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+html {
+  background: var(--color-bg);
+}
+
+/* One place, because every input in this application wants it. Anything under 16px makes
+   iOS Safari zoom the page on focus, and a page that jumps when you tap the one field it
+   has is a page nobody wants to type in twice. */
+input,
+select,
+button,
+textarea {
+  font-size: 16px;
+}

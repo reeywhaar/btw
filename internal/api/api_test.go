@@ -1,0 +1,463 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"btw/internal/config"
+	"btw/internal/store"
+	"btw/internal/webpush"
+)
+
+// fakeNudger stands in for the scheduler, so the button can be tested without a push
+// service on the other end.
+type fakeNudger struct {
+	called bool
+	sent   bool
+}
+
+func (f *fakeNudger) NudgeNow(context.Context, string) (bool, error) {
+	f.called = true
+	return f.sent, nil
+}
+
+type harness struct {
+	*testing.T
+	srv    *httptest.Server
+	store  *store.Store
+	nudger *fakeNudger
+	cookie string
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	key, pub, err := st.VAPIDKeys(t.Context())
+	if err != nil {
+		t.Fatalf("VAPIDKeys(): %v", err)
+	}
+	cfg := &config.Config{
+		PublicURL: mustURL(t, "https://btw.example.com"),
+		Secure:    true,
+	}
+	// A bundle, so the SPA paths are exercised rather than always falling to the
+	// placeholder.
+	spa, err := NewSPA(fstest.MapFS{
+		"index.html":    {Data: []byte("<!doctype html><title>app</title>")},
+		"login.html":    {Data: []byte("<!doctype html><title>login</title>")},
+		"assets/app.js": {Data: []byte("console.log(1)")},
+	})
+	if err != nil {
+		t.Fatalf("NewSPA(): %v", err)
+	}
+
+	h := &harness{T: t, store: st, nudger: &fakeNudger{}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := New(cfg, st, log, webpush.NewSender(key, pub, "https://btw.example.com"), h.nudger, spa)
+	h.srv = httptest.NewServer(server.Handler())
+	t.Cleanup(h.srv.Close)
+	return h
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	return u
+}
+
+// signIn creates an account and holds its session cookie for later requests.
+func (h *harness) signIn() store.Principal {
+	h.Helper()
+	p, err := h.store.CreatePrincipal(h.Context(), "misha", "a-good-password", store.RoleAdmin)
+	if err != nil {
+		h.Fatalf("CreatePrincipal(): %v", err)
+	}
+	resp := h.do("POST", "/api/login", map[string]string{"username": "misha", "password": "a-good-password"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		h.Fatalf("login = %s, want 204", resp.Status)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == SessionCookie {
+			h.cookie = c.Value
+		}
+	}
+	if h.cookie == "" {
+		h.Fatal("login set no session cookie")
+	}
+	return p
+}
+
+func (h *harness) do(method, path string, body any) *http.Response {
+	h.Helper()
+	var r io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			h.Fatalf("marshal: %v", err)
+		}
+		r = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, h.srv.URL+path, r)
+	if err != nil {
+		h.Fatalf("build request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	// What a browser sends for a fetch from this origin, and what a service worker sends
+	// too — which is why the notification buttons need no exception in the guard.
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	if h.cookie != "" {
+		req.AddCookie(&http.Cookie{Name: SessionCookie, Value: h.cookie})
+	}
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.Fatalf("%s %s: %v", method, path, err)
+	}
+	return resp
+}
+
+func decodeBody(t *testing.T, resp *http.Response, v any) {
+	t.Helper()
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+}
+
+func TestNoCORSHeaderIsEverEmitted(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	// The absence is load-bearing rather than an oversight: the browser only ever talks to
+	// this origin, and Access-Control-Allow-Origin would weaken two of the three CSRF
+	// defences that replace it.
+	for _, path := range []string{"/healthz", "/api/me", "/api/reminders", "/api/nope", "/"} {
+		resp := h.do("GET", path, nil)
+		got := resp.Header.Get("Access-Control-Allow-Origin")
+		resp.Body.Close()
+		if got != "" {
+			t.Errorf("%s emitted Access-Control-Allow-Origin: %q", path, got)
+		}
+	}
+}
+
+func TestWithoutASessionEverythingIsRefusedAsJSON(t *testing.T) {
+	h := newHarness(t)
+	resp := h.do("GET", "/api/reminders", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %s, want 401", resp.Status)
+	}
+	// Never a redirect: a 302 to an HTML page is the least useful thing a fetch can get.
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want JSON", ct)
+	}
+}
+
+func TestAMistypedAPIPathIsJSONNotTheShell(t *testing.T) {
+	h := newHarness(t)
+	resp := h.do("GET", "/api/remindrs", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %s, want 404", resp.Status)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want JSON — an HTML 404 reaches fetch as a parse error", ct)
+	}
+}
+
+func TestACrossSiteMutationIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	req, _ := http.NewRequest("POST", h.srv.URL+"/api/reminders", strings.NewReader(`{"text":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: h.cookie})
+
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %s, want 403", resp.Status)
+	}
+}
+
+func TestAMutationMustDeclareJSON(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	req, _ := http.NewRequest("POST", h.srv.URL+"/api/reminders", strings.NewReader(`{"text":"x"}`))
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: h.cookie})
+
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %s, want 415", resp.Status)
+	}
+}
+
+func TestWriteOneDownAndReadItBack(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	resp := h.do("POST", "/api/reminders", map[string]string{"text": "go to the circus"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %s, want 201", resp.Status)
+	}
+	var created struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	}
+	decodeBody(t, resp, &created)
+	if created.Text != "go to the circus" {
+		t.Errorf("text = %q", created.Text)
+	}
+
+	var list struct {
+		Reminders []struct {
+			ID   string `json:"id"`
+			Text string `json:"text"`
+		} `json:"reminders"`
+	}
+	decodeBody(t, h.do("GET", "/api/reminders", nil), &list)
+	if len(list.Reminders) != 1 || list.Reminders[0].ID != created.ID {
+		t.Fatalf("list = %+v, want the one just written", list.Reminders)
+	}
+}
+
+func TestEndingAReminderTakesItOffTheList(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	decodeBody(t, h.do("POST", "/api/reminders", map[string]string{"text": "ring the dentist"}), &created)
+
+	resp := h.do("POST", "/api/reminders/"+created.ID+"/done", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("done = %s, want 204", resp.Status)
+	}
+
+	var live struct {
+		Reminders []json.RawMessage `json:"reminders"`
+	}
+	decodeBody(t, h.do("GET", "/api/reminders", nil), &live)
+	if len(live.Reminders) != 0 {
+		t.Errorf("live list still holds %d", len(live.Reminders))
+	}
+
+	var done struct {
+		Reminders []json.RawMessage `json:"reminders"`
+	}
+	decodeBody(t, h.do("GET", "/api/reminders?done=true", nil), &done)
+	if len(done.Reminders) != 1 {
+		t.Errorf("done list holds %d, want 1", len(done.Reminders))
+	}
+}
+
+func TestAnswringANudgeEndsItsReminder(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+
+	rem, err := h.store.CreateReminder(h.Context(), p.ID, "water the plants")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	nudgeID := store.NewNudgeID()
+	if _, err := h.store.RecordNudge(h.Context(), nudgeID, p.ID, rem.ID); err != nil {
+		t.Fatalf("RecordNudge(): %v", err)
+	}
+
+	// This is the request the service worker makes when somebody taps Drop on a lock
+	// screen. Same-origin from a worker, so the cookie rides along and the guard passes.
+	resp := h.do("POST", "/api/nudges/"+nudgeID+"/drop", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("drop = %s, want 204", resp.Status)
+	}
+
+	got, err := h.store.Reminder(h.Context(), p.ID, rem.ID)
+	if err != nil {
+		t.Fatalf("Reminder(): %v", err)
+	}
+	if !got.Done() {
+		t.Error("the reminder is still live after its nudge was dropped")
+	}
+}
+
+func TestSomebodyElsesReminderIsNotFoundRatherThanForbidden(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	other, err := h.store.CreatePrincipal(h.Context(), "someone", "a-good-password", store.RoleUser)
+	if err != nil {
+		t.Fatalf("CreatePrincipal(): %v", err)
+	}
+	theirs, err := h.store.CreateReminder(h.Context(), other.ID, "not yours")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	// Whether a stranger keeps a reminder is not the caller's business either way, and
+	// scoping the lookup and checking the owner become one operation.
+	resp := h.do("POST", "/api/reminders/"+theirs.ID+"/done", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %s, want 404", resp.Status)
+	}
+}
+
+func TestTheRhythmNeverSaysWhenTheNextNudgeIs(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	resp := h.do("GET", "/api/rhythm", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	// A person who can see that the next nudge is at 14:32 is a person waiting for 14:32,
+	// and the surprise is the entire mechanism.
+	for _, forbidden := range []string{"next", "slot", "_at"} {
+		if bytes.Contains(bytes.ToLower(body), []byte(forbidden)) {
+			t.Errorf("the rhythm leaked scheduling detail (%q): %s", forbidden, body)
+		}
+	}
+}
+
+func TestTheTestButtonGoesThroughTheScheduler(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+	h.nudger.sent = true
+
+	var got struct {
+		Sent bool `json:"sent"`
+	}
+	decodeBody(t, h.do("POST", "/api/nudge", nil), &got)
+	if !h.nudger.called {
+		t.Error("the button did not reach the scheduler")
+	}
+	if !got.Sent {
+		t.Error("sent = false")
+	}
+}
+
+func TestNothingEligibleIsNotAnError(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+	h.nudger.sent = false
+
+	resp := h.do("POST", "/api/nudge", nil)
+	defer resp.Body.Close()
+	// "Everything is done or inside its own interval" is a state the interface explains,
+	// not a failure of the button.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %s, want 200", resp.Status)
+	}
+}
+
+func TestTheVAPIDKeyIsPublic(t *testing.T) {
+	h := newHarness(t)
+	// The page needs it before there is any question of a session, and it is a public key.
+	var got struct {
+		Key string `json:"key"`
+	}
+	decodeBody(t, h.do("GET", "/api/push/key", nil), &got)
+	if len(got.Key) < 80 {
+		t.Errorf("key = %q, want an uncompressed P-256 point", got.Key)
+	}
+}
+
+func TestADeviceEndpointNeverComesBackOut(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+
+	const endpoint = "https://push.example.com/very-secret-capability"
+	if _, err := h.store.RegisterDevice(h.Context(), p.ID, endpoint, "k", "s", "phone"); err != nil {
+		t.Fatalf("RegisterDevice(): %v", err)
+	}
+
+	resp := h.do("GET", "/api/devices", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	// The endpoint is a capability: anybody holding it and a VAPID key can put text on
+	// that lock screen.
+	if bytes.Contains(body, []byte(endpoint)) {
+		t.Errorf("the device endpoint reached the client: %s", body)
+	}
+}
+
+func TestANavigationGetsAShellAndAMissingFileDoesNot(t *testing.T) {
+	h := newHarness(t)
+
+	req, _ := http.NewRequest("GET", h.srv.URL+"/login", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Contains(body, []byte("login")) {
+		t.Errorf("/login served %s, want the login shell", body)
+	}
+
+	// A deep link to a sub-route gets the app shell, which is what makes the URL usable as
+	// an address at all — and what the back gesture on an installed web app depends on.
+	req, _ = http.NewRequest("GET", h.srv.URL+"/settings", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	resp, err = h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Contains(body, []byte("app")) {
+		t.Errorf("/settings served %s, want the app shell", body)
+	}
+
+	// A missing /app.js served as HTML presents as a MIME-type error with no hint that the
+	// file simply is not there.
+	req, _ = http.NewRequest("GET", h.srv.URL+"/assets/missing.js", nil)
+	req.Header.Set("Sec-Fetch-Mode", "no-cors")
+	resp, err = h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("asset: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("missing asset = %s, want 404", resp.Status)
+	}
+}
