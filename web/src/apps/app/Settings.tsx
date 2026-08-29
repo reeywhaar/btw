@@ -14,7 +14,7 @@ import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
 
 export function Settings() {
   return (
-    <main className="space-y-10 px-5">
+    <main className="space-y-8 px-4">
       <ThisBrowser />
       <Devices />
       <RhythmPanel />
@@ -23,22 +23,106 @@ export function Settings() {
   );
 }
 
+/* ---------------------------------------------------------------------------------------
+ * The pieces every settings screen is built from.
+ *
+ * A settings screen is rows of the same shape, and the shape has to be written down once.
+ * Left to lay themselves out, rows drift: one uses justify-between, the next puts its
+ * control inline, and on a 560px column the first reads as a label and a control five
+ * hundred pixels apart while the second wraps its last select onto a line of its own.
+ *
+ * So a Section is a bordered, divided group — which is what makes it visible where one ends
+ * and the next begins — and every row inside it is a Row.
+ * ------------------------------------------------------------------------------------- */
+
 function Section({
   title,
   children,
+  footer,
 }: {
   title: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   return (
     <section>
-      <h2 className="pb-3 text-xs font-medium tracking-widest text-faint uppercase">
+      <h2 className="px-1 pb-2 text-xs font-medium tracking-widest text-faint uppercase">
         {title}
       </h2>
-      {children}
+      <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
+        {children}
+      </div>
+      {footer && <div className="px-1 pt-2">{footer}</div>}
     </section>
   );
 }
+
+/** One row in a section. Everything inside a Section is one of these. */
+function Row({ children }: { children: React.ReactNode }) {
+  return <div className="px-4 py-3">{children}</div>;
+}
+
+/**
+ * A row that names a setting and carries the control that changes it.
+ *
+ * The hairline above and below is what carries the eye from the name on the left to the
+ * control on the right. Without it the two read as unrelated at this column width, which is
+ * the whole reason this component exists rather than a flex on each row.
+ *
+ * Anything needing the full width — a pair of selects, an explanation — goes underneath.
+ */
+function Field({
+  label,
+  control,
+  children,
+}: {
+  label: string;
+  control?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Row>
+      <div className="flex min-h-9 items-center justify-between gap-4">
+        <span className="text-sm text-fg">{label}</span>
+        {control}
+      </div>
+      {children && <div className="space-y-2 pt-3">{children}</div>}
+    </Row>
+  );
+}
+
+/** Explanatory text. Never a label, never an action. */
+function Note({ children }: { children: React.ReactNode }) {
+  return <p className="text-sm text-faint">{children}</p>;
+}
+
+function Check({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      className="size-5 shrink-0 accent-accent"
+    />
+  );
+}
+
+const solidButton =
+  "rounded-lg bg-fg px-4 py-2.5 text-sm font-medium text-bg disabled:opacity-50";
+const quietButton =
+  "rounded-lg border border-line px-4 py-2.5 text-sm text-muted hover:border-line-strong hover:text-fg disabled:opacity-50";
+const linkButton =
+  "text-left text-sm text-muted underline-offset-4 hover:text-fg hover:underline";
+const selectClass =
+  "rounded-md border border-line bg-bg px-3 py-2 text-fg disabled:text-faint disabled:opacity-50";
+
+/* ------------------------------------------------------------------------------------- */
 
 /**
  * What this browser can do about nudges.
@@ -47,10 +131,9 @@ function Section({
  * holding — whether it has a Push API, whether permission was granted, whether it needs
  * installing first. Everything there is a fact about the account.
  *
- * They used to be one block, and the device list and the test button were nested inside the
+ * They used to be one block, with the device list and the test button nested inside the
  * "permission is granted" branch. That meant opening btw on a laptop that cannot receive
- * push hid the phone that can, along with the only button that could reach it — the state of
- * the browser in front of you deciding what you may know about a device somewhere else.
+ * push hid the phone that can, along with the only button that could reach it.
  */
 function ThisBrowser() {
   const [state, setState] = useState<PushState>(() => pushState());
@@ -76,69 +159,78 @@ function ThisBrowser() {
     }
   }
 
-  const button = (label: string) => (
-    <button
-      onClick={turnOn}
-      disabled={busy}
-      className="rounded-lg bg-fg px-4 py-2.5 font-medium text-bg disabled:opacity-50"
-    >
-      {busy ? "asking…" : label}
-    </button>
+  const enableButton = (label: string) => (
+    <Row>
+      <button onClick={turnOn} disabled={busy} className={solidButton}>
+        {busy ? "asking…" : label}
+      </button>
+    </Row>
   );
 
   return (
     <Section title="This browser">
-      <div className="space-y-4">
-        {state === "needs-install" && <InstallGate />}
+      {state === "needs-install" && <InstallGate />}
 
-        {state === "unsupported" && (
-          // Naming the missing capability rather than listing browsers, because the list
-          // would be every mainstream browser of the last few years — which tells somebody
-          // sitting in front of one that cannot do it exactly nothing.
+      {state === "unsupported" && (
+        // Naming the missing capability rather than listing browsers, because the list
+        // would be every mainstream browser of the last few years — which tells somebody
+        // sitting in front of one that cannot do it exactly nothing.
+        <Row>
           <p className="text-sm text-muted">
             This browser has no Push API, so nudges cannot reach it and nothing
             will arrive here. Everything else still works — what you write down
             will be waiting in whatever you next open btw in.
           </p>
-        )}
+        </Row>
+      )}
 
-        {state === "denied" && (
+      {state === "denied" && (
+        <Row>
           <p className="text-sm text-muted">
             Notifications are blocked for this site. A permission refused once
             cannot be asked for again — turn it back on in your browser&apos;s
             settings for this site, then reload.
           </p>
-        )}
+        </Row>
+      )}
 
-        {state === "off" && (
-          <>
+      {state === "off" && (
+        <>
+          <Row>
             <p className="text-sm text-muted">
               A few times a day, at hours nobody picked, one of the things you
               have written down will arrive. You can do it, drop it, or ignore
               it — ignoring it costs nothing.
             </p>
-            {button("Turn on nudges")}
-          </>
-        )}
+          </Row>
+          {enableButton("Turn on nudges")}
+        </>
+      )}
 
-        {state === "ready" && !registered && (
-          <>
+      {state === "ready" && !registered && (
+        <>
+          <Row>
             <p className="text-sm text-muted">
-              Permission is granted but this browser is not registered. Press
-              once more.
+              Permission is granted but this browser is not registered.
             </p>
-            {button("Register this device")}
-          </>
-        )}
+          </Row>
+          {enableButton("Register this device")}
+        </>
+      )}
 
-        {state === "ready" && registered && (
+      {state === "ready" && registered && (
+        <Row>
           <p className="text-sm text-muted">
             This browser will receive nudges.
           </p>
-        )}
+        </Row>
+      )}
 
-        {error && <p className="text-sm text-accent">{error}</p>}
-      </div>
+      {error && (
+        <Row>
+          <p className="text-sm text-accent">{error}</p>
+        </Row>
+      )}
     </Section>
   );
 }
@@ -159,54 +251,55 @@ function Devices() {
 
   return (
     <Section title="Devices">
-      <div className="space-y-4">
-        <ul className="space-y-2 text-sm">
-          {devices.data.devices.map((d) => (
-            <li key={d.id} className="flex items-center justify-between gap-3">
-              <span className="text-muted">{d.label || "a browser"}</span>
-              <button
-                onClick={async () => {
-                  await deleteDevicesById(d.id);
-                  await client.invalidateQueries({ queryKey: qk.devices });
-                }}
-                className="text-faint underline-offset-4 hover:text-accent hover:underline"
-              >
-                forget
-              </button>
-            </li>
-          ))}
-        </ul>
+      {devices.data.devices.map((d) => (
+        <Field
+          key={d.id}
+          label={d.label || "a browser"}
+          control={
+            <button
+              onClick={async () => {
+                await deleteDevicesById(d.id);
+                await client.invalidateQueries({ queryKey: qk.devices });
+              }}
+              className="text-sm text-faint underline-offset-4 hover:text-accent hover:underline"
+            >
+              forget
+            </button>
+          }
+        />
+      ))}
 
-        <div>
-          {/* The button that proves the chain — permission, subscription, VAPID,
-              encryption, service worker, notification — in one press. It stays in the
-              product, because setting up a new phone asks the same question.
+      <Row>
+        {/* The button that proves the chain — permission, subscription, VAPID, encryption,
+            service worker, notification — in one press. It stays in the product, because
+            setting up a new phone asks the same question.
 
-              It sends to every device on the account, not to this one, which is what makes
-              it useful from a browser that cannot receive anything itself. */}
-          <button
-            onClick={() => test.mutate()}
-            disabled={test.isPending}
-            className="rounded-lg border border-line px-4 py-2.5 text-sm text-muted hover:border-line-strong hover:text-fg disabled:opacity-50"
-          >
-            {test.isPending ? "sending…" : "Send one now"}
-          </button>
-          {test.isSuccess && !test.data.sent && (
-            <p className="pt-2 text-sm text-faint">
+            It sends to every device on the account, not to this one, which is what makes it
+            useful from a browser that can receive nothing itself. */}
+        <button
+          onClick={() => test.mutate()}
+          disabled={test.isPending}
+          className={quietButton}
+        >
+          {test.isPending ? "sending…" : "Send one now"}
+        </button>
+        {test.isSuccess && !test.data.sent && (
+          <div className="pt-2">
+            <Note>
               Nothing to send: everything is finished, or was raised too
               recently.
-            </p>
-          )}
-          {test.isSuccess && test.data.sent && (
-            <p className="pt-2 text-sm text-faint">
-              Sent. It should be on its way.
-            </p>
-          )}
-          {test.error && (
-            <p className="pt-2 text-sm text-accent">{test.error.message}</p>
-          )}
-        </div>
-      </div>
+            </Note>
+          </div>
+        )}
+        {test.isSuccess && test.data.sent && (
+          <div className="pt-2">
+            <Note>Sent. It should be on its way.</Note>
+          </div>
+        )}
+        {test.error && (
+          <p className="pt-2 text-sm text-accent">{test.error.message}</p>
+        )}
+      </Row>
     </Section>
   );
 }
@@ -220,23 +313,25 @@ function Devices() {
  */
 function InstallGate() {
   return (
-    <div className="space-y-3 rounded-lg border border-accent/30 bg-accent/5 p-4">
+    <Row>
       <p className="text-sm text-fg">
         On iPhone and iPad, notifications only work once btw is on your Home
         Screen.
       </p>
-      <ol className="list-inside list-decimal space-y-1 text-sm text-muted">
+      <ol className="list-inside list-decimal space-y-1 pt-3 text-sm text-muted">
         <li>Tap the Share button in Safari</li>
         <li>Choose “Add to Home Screen”</li>
         <li>Open btw from there, and come back to this screen</li>
       </ol>
       {!isIOS() && !installed() && (
-        <p className="text-sm text-faint">
-          Elsewhere, installing is optional — it only means a nudge opens btw
-          rather than a browser window.
-        </p>
+        <div className="pt-3">
+          <Note>
+            Elsewhere, installing is optional — it only means a nudge opens btw
+            rather than a browser window.
+          </Note>
+        </div>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -256,15 +351,29 @@ function RhythmPanel() {
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
-    <Section title="Rhythm">
-      <div className="space-y-4 text-sm">
-        <label className="flex items-center justify-between gap-4">
-          <span className="text-muted">A day holds</span>
+    <Section
+      title="Rhythm"
+      footer={
+        // Deliberately nowhere: when the next one is due. A person who can see that it is
+        // at 14:32 is a person waiting for 14:32, and the surprise is the mechanism.
+        <Note>
+          When exactly is not shown, and is not knowable. That is the point of
+          it.
+        </Note>
+      }
+    >
+      <Field
+        label="A day holds"
+        control={
           <select
             value={r.budget}
             onChange={(e) => save.mutate({ budget: Number(e.target.value) })}
-            className="rounded-md border border-line bg-surface px-3 py-2 text-fg"
+            className={selectClass}
           >
+            {/* Able to render the value it already holds. Switching the window back on can
+                leave a budget above what that window takes; the save is refused with a
+                sentence, and a select whose value is missing from its options would go
+                blank before anybody read the sentence. */}
             {Array.from(
               { length: Math.max(r.max_budget, r.budget) + 1 },
               (_, n) => (
@@ -274,63 +383,61 @@ function RhythmPanel() {
               ),
             )}
           </select>
-        </label>
+        }
+      />
 
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            {/* The checkbox is its own label. Wrapping the selects in it too would mean
-                every attempt to change an hour toggled the box instead. */}
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={r.window_enabled}
-                onChange={(e) =>
-                  save.mutate({ window_enabled: e.target.checked })
-                }
-                className="size-4 accent-accent"
-              />
-              <span className="text-muted">Only between</span>
-            </label>
-            <Hour
-              value={r.wake_minute}
-              disabled={!r.window_enabled}
-              onChange={(v) => save.mutate({ wake_minute: v })}
-            />
-            <span className="text-faint">and</span>
-            <Hour
-              value={r.sleep_minute}
-              disabled={!r.window_enabled}
-              onChange={(v) => save.mutate({ sleep_minute: v })}
-            />
-          </div>
-
-          {!r.window_enabled && (
-            // Said out loud, because unchecking a box is not an obvious way to ask for a
-            // notification at four in the morning, and that is what it does.
-            <p className="text-faint">
-              A nudge can arrive at any hour, including while you are asleep.
-            </p>
-          )}
+      <Field
+        label="Only at certain hours"
+        control={
+          <Check
+            checked={r.window_enabled}
+            onChange={(v) => save.mutate({ window_enabled: v })}
+          />
+        }
+      >
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-faint">from</span>
+          <Hour
+            value={r.wake_minute}
+            disabled={!r.window_enabled}
+            onChange={(v) => save.mutate({ wake_minute: v })}
+          />
+          <span className="text-faint">to</span>
+          <Hour
+            value={r.sleep_minute}
+            disabled={!r.window_enabled}
+            onChange={(v) => save.mutate({ sleep_minute: v })}
+          />
         </div>
 
-        {r.timezone !== here && (
-          <button
-            onClick={() => save.mutate({ timezone: here })}
-            className="text-faint underline-offset-4 hover:text-fg hover:underline"
-          >
-            Your hours are set in {r.timezone}. Use {here} instead?
-          </button>
+        {!r.window_enabled && (
+          // Said out loud, because unticking a box is not an obvious way to ask for a
+          // notification at four in the morning, and that is what it does.
+          <Note>
+            A nudge can arrive at any hour, including while you are asleep.
+          </Note>
         )}
+      </Field>
 
-        {save.error && <p className="text-accent">{save.error.message}</p>}
+      {r.timezone !== here && (
+        <Field
+          label={`Your hours are set in ${r.timezone}`}
+          control={
+            <button
+              onClick={() => save.mutate({ timezone: here })}
+              className={linkButton}
+            >
+              use {here}
+            </button>
+          }
+        />
+      )}
 
-        {/* Deliberately nowhere: when the next one is due. A person who can see that it is
-            at 14:32 is a person waiting for 14:32, and the surprise is the mechanism. */}
-        <p className="pt-2 text-faint">
-          When exactly is not shown, and is not knowable. That is the point of
-          it.
-        </p>
-      </div>
+      {save.error && (
+        <Row>
+          <p className="text-sm text-accent">{save.error.message}</p>
+        </Row>
+      )}
     </Section>
   );
 }
@@ -349,7 +456,7 @@ function Hour({
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
-      className="rounded-md border border-line bg-surface px-3 py-2 text-fg disabled:text-faint disabled:opacity-50"
+      className={selectClass}
     >
       {Array.from({ length: 25 }, (_, h) => (
         <option key={h} value={h * 60}>
@@ -363,15 +470,17 @@ function Hour({
 function Account() {
   return (
     <Section title="Account">
-      <button
-        onClick={async () => {
-          await postLogout();
-          window.location.replace("/login");
-        }}
-        className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
-      >
-        Sign out
-      </button>
+      <Row>
+        <button
+          onClick={async () => {
+            await postLogout();
+            window.location.replace("/login");
+          }}
+          className={linkButton}
+        >
+          Sign out
+        </button>
+      </Row>
     </Section>
   );
 }
