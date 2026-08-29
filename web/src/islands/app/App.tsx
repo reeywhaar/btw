@@ -106,7 +106,11 @@ export function App() {
         {/* Where you are is drawn in the foreground colour rather than hidden, so the nav is
             the same three items on every screen and one of them is lit. A nav that changes
             its labels by screen is a nav you have to read before you can use. */}
-        <nav className="flex items-baseline gap-4 text-sm">
+        {/* Centred, not baseline. A baseline row aligns text boxes, and the avatar's
+            baseline is the baseline of the letter inside it — which sits nowhere near the
+            baseline of the words beside it, and was being papered over with a nudge down.
+            Every item here is the same size, so centring is what baseline was trying to be. */}
+        <nav className="flex items-center gap-4 text-sm">
           <NavButton
             active={view === "settings"}
             onClick={() => go("settings")}
@@ -181,7 +185,7 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={
-        "flex items-baseline gap-1.5 underline-offset-4 hover:underline " +
+        "flex items-center gap-1.5 underline-offset-4 hover:underline " +
         (active ? "text-fg" : "text-muted hover:text-fg")
       }
     >

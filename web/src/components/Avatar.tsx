@@ -5,23 +5,40 @@
  * at nav size a stroked figure is a few spindly curves that read as clip art, and it says
  * "a person" next to text already naming which one.
  *
- * A filled disc with a letter in it survives being small — solid shape, one glyph — and
- * belongs to the account it sits beside.
+ * SVG rather than a letter centred in a rounded `<span>`, which is the obvious way and is
+ * off by about a third of a pixel. A line box carries room for descenders, and a capital
+ * has none — so centring the *box* leaves the ink riding high, by an amount that looks like
+ * nothing in the markup and like a mistake on the screen. Measured: 0.38px up at 20px.
+ *
+ * `dy=".35em"` from the geometric centre is the long-standing way to centre a capital on
+ * its own cap height, and it does not depend on the element's line box at all.
  */
 export function Avatar({ name }: { name: string }) {
   // Array.from rather than slice, so a first character outside the basic plane is not cut
   // in half. Usernames here are letters, digits and - _ . — but a component should not
   // depend on its caller's validation.
-  const initial = Array.from(name)[0] ?? "?";
+  const initial = (Array.from(name)[0] ?? "?").toUpperCase();
 
   return (
-    <span
+    <svg
+      viewBox="0 0 20 20"
+      width="1.25em"
+      height="1.25em"
       // Decorative: the name is right beside it, and a screen reader announcing both would
       // read the first letter and then the whole word.
       aria-hidden="true"
-      className="grid size-5 shrink-0 translate-y-0.5 place-items-center rounded-full bg-muted text-[0.65rem] font-semibold text-bg uppercase"
+      className="shrink-0"
     >
-      {initial}
-    </span>
+      <circle cx="10" cy="10" r="10" className="fill-muted" />
+      <text
+        x="10"
+        y="10"
+        dy=".35em"
+        textAnchor="middle"
+        className="fill-bg text-[9px] font-semibold"
+      >
+        {initial}
+      </text>
+    </svg>
   );
 }

@@ -308,8 +308,19 @@ mean less where it matters.
 `Avatar` draws a person as their own initial rather than as a pictogram of a person. The
 generic head-and-shoulders glyph is the obvious choice and the wrong one: at nav size a
 stroked figure is a few spindly curves that read as clip art, and it says "a person" next to
-text already naming which one. A filled disc with a letter in it survives being small, and
-belongs to the account beside it.
+text already naming which one.
+
+It is **SVG rather than a letter centred in a rounded `<span>`**, which is the obvious way and
+is off by about a third of a pixel. A line box carries room for descenders and a capital has
+none, so centring the *box* leaves the ink riding high — an amount that looks like nothing in
+the markup and like a mistake on screen. Measured at 20px: 0.38px up, which is a whole device
+pixel on a retina display and is exactly what got noticed. `dy=".35em"` from the geometric
+centre is the long-standing way to centre a capital on its own cap height, does not depend on
+the element's line box, and brings it to 0.06px.
+
+The nav around it is centred rather than baseline-aligned for the same family of reason: a
+baseline row aligns text boxes, and a disc has no meaningful text baseline. Every item there is
+the same size, so centring is what baseline alignment was trying to be.
 
 `Warning` colours the mark and not the sentence. A whole paragraph set in warning colour
 shouts, and what is being said is usually mild; the icon is enough to catch an eye scanning
