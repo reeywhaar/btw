@@ -153,7 +153,7 @@ silences it, which a sort would fail to give.
 Not the next-least-ineligible reminder. Not a repeat of this morning's. Nothing.
 
 Sending something rather than nothing is how a notification channel gets turned off for good
-by somebody who was otherwise happy with it. `POST /api/nudge` answers `{"sent": false}` with
+by somebody who was otherwise happy with it. `POST /api/nudges` answers `{"sent": false}` with
 a `200` for the same reason: "everything is finished, or was raised too recently" is a state
 the interface explains, not a failure of the button.
 

@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { getDevices, getMe } from "@app/api/actions";
+import { getAuthMe } from "@app/api/actions/auth";
+import { getDevices } from "@app/api/actions/devices";
 import { qk } from "@app/api/keys";
 import { ApiError } from "@app/api/transport";
 import { Reminders } from "@app/apps/app/Reminders";
@@ -67,7 +68,7 @@ function silence(registered: boolean): Silence {
 export function App() {
   const [view, go] = useRoute();
 
-  const me = useQuery({ queryKey: qk.me, queryFn: getMe, retry: false });
+  const me = useQuery({ queryKey: qk.me, queryFn: getAuthMe, retry: false });
   const devices = useQuery({
     queryKey: qk.devices,
     queryFn: getDevices,

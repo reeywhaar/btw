@@ -6,7 +6,8 @@
 // also rules out a browser that would work if it were installed, and it will keep being
 // right on whatever ships next without anybody editing a regex.
 
-import { getPushKey, postDevices } from "@app/api/actions";
+import { postDevices } from "@app/api/actions/devices";
+import { getPushKey } from "@app/api/actions/push";
 
 export type PushState =
   | "unsupported" // this browser cannot do it at all

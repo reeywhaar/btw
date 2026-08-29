@@ -73,14 +73,17 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.healthz)
 
-	// Public: the four things somebody without a session can do.
-	mux.HandleFunc("POST /api/login", s.login)
-	mux.HandleFunc("GET /api/invites/{token}", s.getInvite)
-	mux.HandleFunc("POST /api/invites/{token}/accept", s.acceptInvite)
-	mux.HandleFunc("GET /api/push/key", s.pushKey)
+	// Everything about proving who you are lives under /api/auth. Signing in, signing out
+	// and asking who you are were three unrelated-looking paths at the top level, next to
+	// the resources they are not — and an invitation is the same subject, since accepting
+	// one is how an account starts.
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("GET /api/auth/invites/{token}", s.getInvite)
+	mux.HandleFunc("POST /api/auth/invites/{token}/accept", s.acceptInvite)
+	mux.Handle("POST /api/auth/logout", s.requireSession(s.logout))
+	mux.Handle("GET /api/auth/me", s.requireSession(s.me))
 
-	mux.Handle("POST /api/logout", s.requireSession(s.logout))
-	mux.Handle("GET /api/me", s.requireSession(s.me))
+	mux.HandleFunc("GET /api/push/key", s.pushKey)
 
 	mux.Handle("GET /api/reminders", s.requireSession(s.listReminders))
 	mux.Handle("POST /api/reminders", s.requireSession(s.createReminder))
@@ -94,7 +97,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/devices", s.requireSession(s.listDevices))
 	mux.Handle("POST /api/devices", s.requireSession(s.createDevice))
 	mux.Handle("DELETE /api/devices/{id}", s.requireSession(s.deleteDevice))
-	mux.Handle("POST /api/nudge", s.requireSession(s.nudgeNow))
+	// POST /api/nudges creates one now — which is what the button does, and reads as what
+	// it does. It was /api/nudge, a singular root beside a plural one for the same subject.
+	mux.Handle("POST /api/nudges", s.requireSession(s.nudgeNow))
 
 	// The two the service worker calls. Same-origin from a worker, so the session cookie
 	// rides along under SameSite=Lax and Sec-Fetch-Site says same-origin.

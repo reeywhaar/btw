@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
 import {
-  getInvitesByToken,
-  postInvitesByTokenAccept,
-  postLogin,
-} from "@app/api/actions";
+  getAuthInvitesByToken,
+  postAuthInvitesByTokenAccept,
+  postAuthLogin,
+} from "@app/api/actions/auth";
 
 /**
  * Two pages in one island: signing in, and accepting an invitation.
@@ -61,7 +61,7 @@ function SignIn() {
           setBusy(true);
           setError("");
           try {
-            await postLogin(username, password);
+            await postAuthLogin(username, password);
             window.location.replace("/");
           } catch (err) {
             setError(err instanceof Error ? err.message : "that did not work");
@@ -106,7 +106,7 @@ function Accept({ token }: { token: string }) {
   // Asked before anybody types a password into it. The endpoint reveals nothing but the
   // link's own validity.
   useEffect(() => {
-    getInvitesByToken(token)
+    getAuthInvitesByToken(token)
       .then(() => setValid(true))
       .catch((err: unknown) => {
         setValid(false);
@@ -128,7 +128,7 @@ function Accept({ token }: { token: string }) {
           setBusy(true);
           setError("");
           try {
-            await postInvitesByTokenAccept(token, username, password);
+            await postAuthInvitesByTokenAccept(token, username, password);
             // Signed in already: accepting an invitation and then being shown a login form
             // is asking somebody to prove something they just proved.
             window.location.replace("/");

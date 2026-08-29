@@ -44,12 +44,15 @@ it — pushes `/` instead of reversing out of btw entirely.
 
 ## The API layer
 
-Two files.
+`transport.ts` is the only file in the frontend that mentions `fetch`. Under
+`api/actions/` there is **one module per API root** — `auth`, `reminders`, `rhythm`,
+`devices`, `nudges`, `push` — each holding one named function per endpoint, mechanically
+named from the route (see [api_design.md](api_design.md#client-naming)) so a call site and a
+handler find each other by grep.
 
-`transport.ts` is the only file in the frontend that mentions `fetch`. `actions.ts` is one
-named function per endpoint, mechanically named from the route — see
-[api_design.md](api_design.md#client-naming) — so a call site and a handler find each other by
-grep.
+It was one `actions.ts`. Every component then imported from a single file that knew about
+every endpoint in the product, and that file only ever grows. There is no barrel re-exporting
+the modules either: an import that names the root it came from says where to go looking.
 
 The fuller shape this wants to grow into is four: `transport`, a `dispatcher` that carries an
 `AbortSignal` and throws, a curried `request`, and a `provider` that injects the dispatcher

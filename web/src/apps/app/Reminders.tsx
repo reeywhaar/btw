@@ -8,7 +8,7 @@ import {
   postRemindersByIdDone,
   postRemindersByIdRevive,
   type Reminder,
-} from "@app/api/actions";
+} from "@app/api/actions/reminders";
 import { qk } from "@app/api/keys";
 
 export function Reminders() {

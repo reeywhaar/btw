@@ -98,7 +98,7 @@ The **per-username** one stops somebody working through a password list against 
 which the global limit alone would not — it would only make them share the budget with
 everybody else.
 
-`POST /api/nudge` is limited per principal: it makes an outbound request on the caller's
+`POST /api/nudges` is limited per principal: it makes an outbound request on the caller's
 behalf.
 
 Limiters live on the `Server` rather than at package level. Two instances in one process —
@@ -106,19 +106,23 @@ which is what a test suite is — would otherwise share one budget and lock each
 
 ## Endpoints
 
-### Public
+### Auth
 
 ```
-GET    /healthz                          {"ok": true, "version": "…"}
-
-POST   /api/login                        {username, password} → 204 + Set-Cookie
-GET    /api/invites/{token}              {role, expires_at} — validity only
-POST   /api/invites/{token}/accept       {username, password} → 204 + Set-Cookie
-GET    /api/push/key                     {key} — the VAPID public key
+POST   /api/auth/login                   {username, password} → 204 + Set-Cookie
+POST   /api/auth/logout                  → 204
+GET    /api/auth/me                      {id, username, role, created_at}
+GET    /api/auth/invites/{token}         {role, expires_at} — validity only
+POST   /api/auth/invites/{token}/accept  {username, password} → 204 + Set-Cookie
 ```
 
-`GET /api/invites/{token}` tells the acceptance page whether a link is live before somebody
-types a password into it. It reveals nothing but its own validity.
+**Everything about proving who you are is under one root.** These were five paths at the top
+level — `/api/login`, `/api/me`, `/api/invites/…` — sitting beside the resources they are
+not. An invitation belongs here rather than under a resource of its own, because accepting
+one is how an account starts; it is authentication, not a thing somebody keeps.
+
+`GET /api/auth/invites/{token}` tells the acceptance page whether a link is live before
+somebody types a password into it. It reveals nothing but its own validity.
 
 Accepting signs you in immediately. Being shown a login form straight afterwards is asking
 somebody to prove something they just proved.
@@ -126,13 +130,6 @@ somebody to prove something they just proved.
 `GET /api/push/key` is public because the page needs it before there is any question of a
 session, and because it is a public key. What it reveals is that this instance sends push
 notifications, which it announces by existing.
-
-### Session
-
-```
-POST   /api/logout                       → 204
-GET    /api/me                           {id, username, role, created_at}
-```
 
 ### Reminders
 
@@ -167,11 +164,15 @@ the person pressing it wanted it ended either way.
 ### Nudges
 
 ```
+POST   /api/nudges                       → {sent: bool} — send one now
 POST   /api/nudges/{id}/done             → 204
 POST   /api/nudges/{id}/drop             → 204
 ```
 
-The two the service worker calls. `{id}` is a **nudge** id rather than a reminder id, so acting
+**`POST /api/nudges` creates one**, which is what the button does and what the path now says.
+It was `/api/nudge` — a singular root beside a plural one, for one subject.
+
+The other two are what the service worker calls. `{id}` is a **nudge** id rather than a reminder id, so acting
 on a notification cannot act on the wrong thing after the list has been edited, and so the log
 records that this arrival is the one that was answered.
 
@@ -205,7 +206,6 @@ would be a surprise in the wrong direction; the new rhythm is what tomorrow is p
 GET    /api/devices                      {devices: [{id, label, created_at, last_ok_at, failure_count, last_error}]}
 POST   /api/devices                      {endpoint, p256dh, auth, label} → {id, label}
 DELETE /api/devices/{id}                 → 204
-POST   /api/nudge                        → {sent: bool}
 ```
 
 `POST /api/devices` is **idempotent on the endpoint**: a browser re-registering an unchanged
@@ -216,7 +216,7 @@ opens the app. Registering an endpoint that belongs to another account moves it 
 **The endpoint never comes back out.** It is a capability: anybody holding it and a VAPID key
 can put text on that lock screen. A test asserts it never appears in a response.
 
-`POST /api/nudge` is the button that proves the chain — permission, subscription, VAPID,
+`POST /api/nudges` is the button that proves the chain — permission, subscription, VAPID,
 encryption, service worker, notification — in one press, without waiting hours for a slot. It
 stays in the product after it has served its purpose in development, because setting up a new
 phone raises exactly the same question.
@@ -251,5 +251,12 @@ getReminders                  GET    /api/reminders
 postReminders                 POST   /api/reminders
 postRemindersByIdDone         POST   /api/reminders/{id}/done
 deleteDevicesById             DELETE /api/devices/{id}
+postAuthInvitesByTokenAccept  POST   /api/auth/invites/{token}/accept
 patchRhythm                   PATCH  /api/rhythm
 ```
+
+**One module per root**, under `web/src/api/actions/` — `auth`, `reminders`, `rhythm`,
+`devices`, `nudges`, `push`. A single `actions.ts` holding all of them meant every component
+importing from one file that knew about every endpoint in the product, and the file only ever
+grows. There is no barrel re-exporting them: an import that names the root it came from says
+where to go and looking for it.

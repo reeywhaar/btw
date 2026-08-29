@@ -1,14 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import {
-  deleteDevicesById,
-  getDevices,
-  getRhythm,
-  patchRhythm,
-  postLogout,
-  postNudge,
-} from "@app/api/actions";
+import { postAuthLogout } from "@app/api/actions/auth";
+import { deleteDevicesById, getDevices } from "@app/api/actions/devices";
+import { postNudges } from "@app/api/actions/nudges";
+import { getRhythm, patchRhythm } from "@app/api/actions/rhythm";
 import { qk } from "@app/api/keys";
 import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
 
@@ -245,7 +241,7 @@ function ThisBrowser() {
 function Devices() {
   const client = useQueryClient();
   const devices = useQuery({ queryKey: qk.devices, queryFn: getDevices });
-  const test = useMutation({ mutationFn: postNudge });
+  const test = useMutation({ mutationFn: postNudges });
 
   if (!devices.isSuccess || devices.data.devices.length === 0) return null;
 
@@ -473,7 +469,7 @@ function Account() {
       <Row>
         <button
           onClick={async () => {
-            await postLogout();
+            await postAuthLogout();
             window.location.replace("/login");
           }}
           className={linkButton}

@@ -90,7 +90,7 @@ func (h *harness) signIn() store.Principal {
 	if err != nil {
 		h.Fatalf("CreatePrincipal(): %v", err)
 	}
-	resp := h.do("POST", "/api/login", map[string]string{"username": "misha", "password": "a-good-password"})
+	resp := h.do("POST", "/api/auth/login", map[string]string{"username": "misha", "password": "a-good-password"})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		h.Fatalf("login = %s, want 204", resp.Status)
@@ -364,7 +364,7 @@ func TestTheTestButtonGoesThroughTheScheduler(t *testing.T) {
 	var got struct {
 		Sent bool `json:"sent"`
 	}
-	decodeBody(t, h.do("POST", "/api/nudge", nil), &got)
+	decodeBody(t, h.do("POST", "/api/nudges", nil), &got)
 	if !h.nudger.called {
 		t.Error("the button did not reach the scheduler")
 	}
@@ -378,7 +378,7 @@ func TestNothingEligibleIsNotAnError(t *testing.T) {
 	h.signIn()
 	h.nudger.sent = false
 
-	resp := h.do("POST", "/api/nudge", nil)
+	resp := h.do("POST", "/api/nudges", nil)
 	defer resp.Body.Close()
 	// "Everything is done or inside its own interval" is a state the interface explains,
 	// not a failure of the button.
