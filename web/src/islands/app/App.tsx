@@ -5,7 +5,7 @@ import { getAuthMe } from "@app/api/actions/auth";
 import { getDevices } from "@app/api/actions/devices";
 import { qk } from "@app/api/keys";
 import { ApiError } from "@app/api/transport";
-import { PersonIcon } from "@app/components/icons/PersonIcon";
+import { Avatar } from "@app/components/Avatar";
 import { Account } from "@app/islands/app/Account";
 import { Reminders } from "@app/islands/app/Reminders";
 import { useRoute } from "@app/islands/app/route";
@@ -122,7 +122,7 @@ export function App() {
             </a>
           )}
           <NavButton active={view === "account"} onClick={() => go("account")}>
-            <PersonIcon className="text-base" />
+            <Avatar name={me.data.username} />
             {me.data.username}
           </NavButton>
         </nav>

@@ -25,8 +25,8 @@ web/
 ```
 
 The app island has three routes — `/`, `/settings`, `/account` — and one masthead across all
-of them: `settings`, `admin` when the account is one, and the person's own name behind a
-mark. Where you are is drawn in the foreground colour rather than hidden, so the nav is the
+of them: `settings`, `admin` when the account is one, and the person's own name behind their
+initial. Where you are is drawn in the foreground colour rather than hidden, so the nav is the
 same three items everywhere and one of them is lit. A nav that renames its items by screen is
 a nav you have to read before you can use.
 
@@ -304,6 +304,12 @@ somebody eventually forgets.
 light ground and `#f59e0b` on the dark, 4.8:1 and 9.2:1. The accent means *this was rejected*
 everywhere it appears, and spending it on "this browser cannot receive nudges" would make it
 mean less where it matters.
+
+`Avatar` draws a person as their own initial rather than as a pictogram of a person. The
+generic head-and-shoulders glyph is the obvious choice and the wrong one: at nav size a
+stroked figure is a few spindly curves that read as clip art, and it says "a person" next to
+text already naming which one. A filled disc with a letter in it survives being small, and
+belongs to the account beside it.
 
 `Warning` colours the mark and not the sentence. A whole paragraph set in warning colour
 shouts, and what is being said is usually mild; the icon is enough to catch an eye scanning
