@@ -109,7 +109,15 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
   });
 
   return (
-    <li className="flex items-start gap-3 py-3">
+    // items-baseline, not items-start or items-center. The text is 16px and the buttons are
+    // 14px inside padding and a border, so aligning the boxes leaves the first line sitting
+    // higher than the labels beside it. Baseline aligns what the eye actually reads.
+    //
+    // And not items-center, because a reminder wraps: centring two lines against the buttons
+    // pushes the first line above them and the second below. Baseline uses the *first*
+    // line's baseline, so a reminder of any height starts level with Done and grows
+    // downward.
+    <li className="flex items-baseline gap-3 py-3">
       <span className="min-w-0 flex-1 break-words">{reminder.text}</span>
       {/* Done and Drop end a reminder identically. The two words exist because they are
           two different acts — "I did it" and "I do not want this" — and a product with
@@ -147,7 +155,7 @@ function FinishedRow({
   });
 
   return (
-    <li className="flex items-start gap-3 py-3 text-faint">
+    <li className="flex items-baseline gap-3 py-3 text-faint">
       <span className="min-w-0 flex-1 break-words line-through">
         {reminder.text}
       </span>

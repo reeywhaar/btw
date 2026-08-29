@@ -172,6 +172,30 @@ deciding what you were allowed to know about a device somewhere else. `Send one 
 every device on the account, which is exactly what makes it useful from a browser that can
 receive nothing itself.
 
+## A row whose text can wrap
+
+The reminder list aligns its rows on the **baseline**, not the box.
+
+`items-start` was wrong: the text is 16px and the buttons beside it are 14px inside padding
+and a border, so aligning the boxes leaves the first line sitting above the labels next to it.
+`items-center` is wrong for a different reason — a reminder wraps, and centring two lines
+against the buttons pushes the first line above them and the second below.
+
+Baseline uses the *first* line's baseline, so a reminder of any height starts level with Done
+and grows downward.
+
+## A section with nothing to do in it is not shown
+
+Recovery disappears when the instance has no relay **and** the account has no address. Both
+halves matter: configuring a relay is an administrator's job, and explaining that on
+everybody's settings is an explanation aimed at somebody who is not reading it.
+
+An address already on file keeps the section even when the relay goes away, so it can still be
+seen and forgotten — what it cannot do then is change, and the warning says so.
+
+The general rule is the one in **Saying why nothing will arrive** below, and this is its other
+half: say why when there is something the reader can do, and show nothing when there is not.
+
 ## Saying why nothing will arrive
 
 A standing bar sits above the list when **nothing will arrive anywhere**. It is not

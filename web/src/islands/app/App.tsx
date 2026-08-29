@@ -101,12 +101,25 @@ export function App() {
         >
           btw
         </button>
-        <button
-          onClick={() => go(view === "settings" ? "list" : "settings")}
-          className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
-        >
-          {view === "settings" ? "back" : "settings"}
-        </button>
+        <nav className="flex items-baseline gap-4">
+          <button
+            onClick={() => go(view === "settings" ? "list" : "settings")}
+            className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
+          >
+            {view === "settings" ? "back" : "settings"}
+          </button>
+          {/* In the masthead rather than buried in settings, which is where it was and
+              where nobody found it. It decides only whether to draw the link; every route
+              behind it is refused server-side by requireAdmin. */}
+          {me.data.role === "admin" && (
+            <a
+              href="/admin"
+              className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
+            >
+              admin
+            </a>
+          )}
+        </nav>
       </header>
 
       {/* Standing, and not dismissible. An app that looks like it is working and silently

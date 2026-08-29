@@ -38,6 +38,15 @@ export function Recovery() {
 
   if (!recovery.isSuccess) return null;
   const r = recovery.data;
+
+  // No relay and no address is a section with nothing in it and nothing to do about it.
+  // Configuring a relay is an administrator's job, and explaining that on everybody's
+  // settings is an explanation aimed at somebody who is not reading it.
+  //
+  // An address already on file keeps the section even when the relay goes away, so it can
+  // still be seen and forgotten. What it cannot do then is change, which is what the
+  // warning below says.
+  if (!r.mail_configured && !r.email) return null;
   const refresh = () => client.invalidateQueries({ queryKey: qk.recovery });
 
   return (
@@ -53,12 +62,12 @@ export function Recovery() {
       >
         {!r.mail_configured && (
           <Row>
-            {/* Said out loud rather than greying a button with no explanation — whether this
-                instance can send mail is not a secret from the people whose recovery
-                depends on it. */}
+            {/* Only reachable with an address already on file: this instance could send
+                once and cannot now, which is the difference between "recovery works" and
+                "recovery worked". */}
             <Warning>
-              This instance cannot send mail yet, so an address cannot be
-              proved. An administrator has to configure a relay first.
+              This instance can no longer send mail, so this address cannot be
+              changed or re-proved until an administrator configures a relay.
             </Warning>
           </Row>
         )}

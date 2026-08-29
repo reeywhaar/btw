@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getAuthMe, postAuthLogout } from "@app/api/actions/auth";
+import { postAuthLogout } from "@app/api/actions/auth";
 import { deleteDevicesById, getDevices } from "@app/api/actions/devices";
 import { postNudges } from "@app/api/actions/nudges";
 import { getRhythm, patchRhythm } from "@app/api/actions/rhythm";
@@ -372,21 +372,9 @@ function Hour({
 }
 
 function Account() {
-  // Shares the cache key the shell already filled, so this costs no request. It decides
-  // only whether to draw the link; every route behind it is refused server-side.
-  const me = useQuery({ queryKey: qk.me, queryFn: getAuthMe });
-
   return (
     <section className="space-y-3">
       <Heading>Account</Heading>
-      {me.data?.role === "admin" && (
-        <a
-          href="/admin"
-          className="block text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
-        >
-          Administration
-        </a>
-      )}
       <Button
         variant="quiet"
         onClick={async () => {
