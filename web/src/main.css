@@ -60,9 +60,15 @@ html {
 /* One place, because every input in this application wants it. Anything under 16px makes
    iOS Safari zoom the page on focus, and a page that jumps when you tap the one field it
    has is a page nobody wants to type in twice. */
+/* iOS Safari zooms the page when a control smaller than 16px takes focus, and a page that
+ * jumps when you tap the one field it has is a page nobody wants to type in twice.
+ *
+ * Only what can be *typed into or opened* triggers it. `button` was in this list, which
+ * silently overrode `text-sm` on every button in the application — a 14px label and a 16px
+ * one sitting side by side in the masthead is how it was noticed, but it was every button.
+ * A rule this broad is not a safety net, it is an override nobody can see at the call site. */
 input,
 select,
-button,
 textarea {
   font-size: 16px;
 }

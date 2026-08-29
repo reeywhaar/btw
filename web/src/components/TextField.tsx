@@ -33,7 +33,9 @@ export function TextField({
         id={id}
         aria-describedby={hint ? hintId : undefined}
         aria-invalid={error ? true : undefined}
-        className="rounded-lg border border-line bg-bg px-3 py-2.5 text-sm text-fg placeholder:text-faint focus:border-accent/60 focus:outline-none"
+        // No text size here: main.css holds every input at 16px so iOS does not zoom the
+        // page on focus, and a text-sm would read like it applied when it does not.
+        className="rounded-lg border border-line bg-bg px-3 py-2.5 text-fg placeholder:text-faint focus:border-accent/60 focus:outline-none"
         {...rest}
       />
       {error ? <p className="text-xs text-accent">{error}</p> : null}
