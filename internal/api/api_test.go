@@ -21,16 +21,17 @@ import (
 // fakeNudger stands in for the scheduler, so the button can be tested without a push
 // service on the other end.
 type fakeNudger struct {
-	called  bool
-	outcome string
+	called    bool
+	outcome   string
+	delivered int
 }
 
-func (f *fakeNudger) NudgeNow(context.Context, string) (string, error) {
+func (f *fakeNudger) NudgeNow(context.Context, string) (string, int, error) {
 	f.called = true
 	if f.outcome == "" {
-		return "nothing", nil
+		return "nothing", 0, nil
 	}
-	return f.outcome, nil
+	return f.outcome, f.delivered, nil
 }
 
 type harness struct {

@@ -20,24 +20,52 @@ self.addEventListener("push", (event) => {
   }
 
   const body = data.text || "…";
-  event.waitUntil(
-    self.registration.showNotification("btw", {
-      // The sentence somebody wrote is the whole message. A title like "Reminder" above it
-      // is a word nobody needs to read twice.
-      body,
-      // One tag for everything, so a second notification replaces the first on screen
-      // rather than stacking. It pairs with the Topic header on the way out, which makes
-      // the push service collapse anything it could not deliver.
-      tag: "btw",
-      renotify: true,
-      data: { nudge_id: data.nudge_id },
-      actions: [
-        { action: "done", title: "Done" },
-        { action: "drop", title: "Drop" },
-      ],
-    }),
-  );
+  event.waitUntil(showOne(body, data.nudge_id));
 });
+
+/**
+ * Show one notification, replacing whatever is already up.
+ *
+ * `tag` is supposed to do this on its own, and on Chromium it does — three pushes leave one
+ * notification. WebKit exposes the property and does not use it to coalesce, so on iOS every
+ * push stacks: https://bugs.webkit.org/show_bug.cgi?id=258922, open since 2023.
+ *
+ * So the tag stays, and the old ones are closed by hand first. That is the workaround named
+ * in the bug, and it is best-effort by nature: `close()` is itself reported unreliable on
+ * iOS, and `getNotifications()` can return stale entries under rapid pushes.
+ *
+ * None of which is a substitute for sending once. Two pushes are two notifications on a
+ * platform that will not coalesce them, and that is a server-side fault — see
+ * docs/push.md#one-browser-one-device.
+ */
+async function showOne(body, nudgeID) {
+  try {
+    for (const existing of await self.registration.getNotifications({
+      tag: "btw",
+    })) {
+      existing.close();
+    }
+  } catch {
+    // Not supported, or refused. The tag is still asked for below.
+  }
+
+  await self.registration.showNotification("btw", {
+    // The sentence somebody wrote is the whole message. A title like "Reminder" above it is
+    // a word nobody needs to read twice.
+    body,
+    // One tag for everything. It pairs with the Topic header on the way out, which makes
+    // the push service collapse anything it could not deliver — and where the browser
+    // honours it, it replaces rather than stacks. renotify also makes deleting the tag
+    // throw rather than silently regress, since the spec refuses one without the other.
+    tag: "btw",
+    renotify: true,
+    data: { nudge_id: nudgeID },
+    actions: [
+      { action: "done", title: "Done" },
+      { action: "drop", title: "Drop" },
+    ],
+  });
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

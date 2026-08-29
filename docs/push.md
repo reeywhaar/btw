@@ -136,6 +136,20 @@ find at a stable address.
   silently, which is what a reminder wants — and because the spec refuses `renotify` without
   a `tag`, deleting the tag throws a `TypeError` instead of quietly stacking notifications
   again.
+
+  **WebKit does not honour the tag.** It exposes the property and does not use it to
+  coalesce, so on iOS every push stacks —
+  [WebKit bug 258922](https://bugs.webkit.org/show_bug.cgi?id=258922), open since 2023 and
+  still `NEW`. Desktop Safari behaves better than mobile; neither is Chromium.
+
+  So the worker closes any notification carrying the tag before showing the next one, which
+  is the workaround the bug itself names. It is best-effort by construction: `close()` is
+  reported unreliable on iOS, and `getNotifications()` can return stale entries under rapid
+  pushes.
+
+  The lesson worth keeping is that the Chromium result did not generalise. "Three pushes
+  leave one notification" was measured, true, and true only there — and the platform this
+  product is aimed at is the one that does not do it.
 - **`notificationclick`** → `POST /api/nudges/{id}/{done|drop}`, then focus or open the app.
   Same-origin from a worker, so the session cookie rides along under `SameSite=Lax` and
   `Sec-Fetch-Site` says `same-origin` — which is why the CSRF guard needs no exception for it.
@@ -201,6 +215,12 @@ the column existed still has them — every one of which receives its own copy o
 Deleting them automatically is not available: a row with no client id is indistinguishable
 from a second browser that simply has not registered since, and guessing wrong would delete a
 device somebody is using.
+
+None of this is a substitute for **sending once**. On a platform that will not coalesce, two
+pushes are two notifications and no worker code can make them one — which turns "how many
+devices took it" from a detail into the only number that matters. `POST /api/nudges` returns
+`delivered`, and the interface says *Sent to 2 devices — each shows its own notification*
+rather than a bare "sent".
 
 So the list says so instead. Each row this browser owns is marked, the rest are counted, and
 the sentence names the consequence — *each one is a separate copy of the same reminder* —

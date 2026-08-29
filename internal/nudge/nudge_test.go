@@ -173,7 +173,7 @@ func TestAReminderArrivesReadableOnTheDevice(t *testing.T) {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
 
-	if got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil || got != Sent {
+	if got, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil || got != Sent {
 		t.Fatalf("NudgeNow() = %q, %v; want %q", got, err, Sent)
 	}
 	if r.service.count() != 1 {
@@ -207,7 +207,7 @@ func TestTheNudgeAnswersToItsOwnId(t *testing.T) {
 	r := newRig(t)
 	rem, _ := r.store.CreateReminder(t.Context(), r.principal.ID, "ring the dentist")
 
-	if _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
 	id := r.decrypt(r.service.bodies[0])["nudge_id"]
@@ -226,7 +226,7 @@ func TestNothingEligibleSendsNothingAtAll(t *testing.T) {
 	r := newRig(t)
 	// No reminders. Reaching for something to send anyway is how a notification channel
 	// gets turned off for good.
-	got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
+	got, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
 	if err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
@@ -242,7 +242,7 @@ func TestARemindersFloorIsNotSpentOnAMessageThatNeverLeft(t *testing.T) {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
 
-	got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
+	got, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
 	if err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
@@ -263,7 +263,7 @@ func TestADeadSubscriptionIsForgotten(t *testing.T) {
 	r.service.status = http.StatusGone
 	r.store.CreateReminder(t.Context(), r.principal.ID, "buy milk")
 
-	if _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
 	// A browser that has been reinstalled leaves an endpoint that refuses forever, and a
@@ -279,7 +279,7 @@ func TestABusySubscriptionIsKept(t *testing.T) {
 	r.service.status = http.StatusTooManyRequests
 	r.store.CreateReminder(t.Context(), r.principal.ID, "buy milk")
 
-	if _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
 	devices, _ := r.store.Devices(t.Context(), r.principal.ID)
@@ -332,7 +332,7 @@ func TestTheButtonSendsSomethingItJustSent(t *testing.T) {
 	// the floor; the second must still send, because a button that usually declines proves
 	// nothing about the chain it exists to prove.
 	for i := range 2 {
-		got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
+		got, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
 		if err != nil {
 			t.Fatalf("NudgeNow() %d: %v", i+1, err)
 		}
@@ -351,7 +351,7 @@ func TestTheSchedulerStillWaitsOutTheFloor(t *testing.T) {
 
 	// The button ignoring the floor must not have taken it away from the scheduler, which
 	// is what stops the same thing arriving twice in one morning.
-	if _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
 	before := r.service.count()

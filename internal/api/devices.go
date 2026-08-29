@@ -98,7 +98,7 @@ func (s *Server) nudgeNow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "give it a minute")
 		return
 	}
-	outcome, err := s.nudger.NudgeNow(r.Context(), p.ID)
+	outcome, delivered, err := s.nudger.NudgeNow(r.Context(), p.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -106,9 +106,13 @@ func (s *Server) nudgeNow(w http.ResponseWriter, r *http.Request) {
 	// A 200 whatever the outcome: none of the three is a failure of the request. Which one
 	// it was rides in the body, because "nothing to send" and "nothing reached your phone"
 	// send somebody to two different places.
+	// `delivered` is how many devices took it, and it is the number that settles an
+	// argument the interface cannot otherwise have: one push arriving twice is a browser
+	// problem, and two pushes is this account having two subscriptions.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"sent":    outcome == "sent",
-		"outcome": outcome,
+		"sent":      outcome == "sent",
+		"outcome":   outcome,
+		"delivered": delivered,
 	})
 }
 

@@ -18,6 +18,9 @@ export type Outcome = "sent" | "nothing" | "undelivered";
  * from a lock screen, where there is no bundle to import from.
  */
 export const postNudges = () =>
-  request<{ sent: boolean; outcome: Outcome }>("/api/nudges", {
-    method: "POST",
-  });
+  request<{ sent: boolean; outcome: Outcome; delivered: number }>(
+    "/api/nudges",
+    {
+      method: "POST",
+    },
+  );

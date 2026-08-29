@@ -116,7 +116,7 @@ func (s *Scheduler) pass(ctx context.Context) {
 		if !got {
 			continue
 		}
-		if _, err := s.deliver(ctx, slot.PrincipalID, store.RespectFloor); err != nil {
+		if _, _, err := s.deliver(ctx, slot.PrincipalID, store.RespectFloor); err != nil {
 			s.log.Error("could not deliver a nudge", "principal", slot.PrincipalID, "err", err)
 		}
 	}
@@ -155,21 +155,24 @@ func (s *Scheduler) plan(ctx context.Context, principalID string, now time.Time)
 // a test button that takes a shortcut tests the shortcut. It differs in one rule, and only
 // one: a reminder's own interval does not apply. Somebody pressing this has asked for a
 // nudge, and "that was raised too recently" refuses a request nobody made on their behalf.
-func (s *Scheduler) NudgeNow(ctx context.Context, principalID string) (Outcome, error) {
+func (s *Scheduler) NudgeNow(ctx context.Context, principalID string) (Outcome, int, error) {
 	return s.deliver(ctx, principalID, store.IgnoreFloor)
 }
 
 // deliver chooses a reminder and sends it, and reports whether anything went out.
-func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store.Floor) (Outcome, error) {
+// The int is how many devices took it. Reported rather than kept because "it sent one push
+// and you saw two notifications" and "it sent two pushes" are different faults, and without
+// the number there is no way to tell them apart from the outside.
+func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store.Floor) (Outcome, int, error) {
 	now := s.store.Now()
 
 	candidates, err := s.store.Candidates(ctx, principalID, now, floor)
 	if err != nil {
-		return NothingToSend, err
+		return NothingToSend, 0, err
 	}
 	last, err := s.store.LastNudgedReminder(ctx, principalID)
 	if err != nil {
-		return NothingToSend, err
+		return NothingToSend, 0, err
 	}
 
 	// The id is minted before the choice because it seeds it, and because it has to travel
@@ -182,15 +185,15 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 		// reminder, or repeating this morning's, is how a notification channel gets turned
 		// off for good by somebody who was otherwise happy with it.
 		s.log.Debug("nothing to nudge with", "principal", principalID, "candidates", len(candidates))
-		return NothingToSend, nil
+		return NothingToSend, 0, nil
 	}
 
 	devices, err := s.store.Devices(ctx, principalID)
 	if err != nil {
-		return NothingToSend, err
+		return NothingToSend, 0, err
 	}
 	if len(devices) == 0 {
-		return Undelivered, nil
+		return Undelivered, 0, nil
 	}
 
 	payload, err := json.Marshal(map[string]string{
@@ -198,22 +201,23 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 		"text":     chosen.Text,
 	})
 	if err != nil {
-		return NothingToSend, err
+		return NothingToSend, 0, err
 	}
 
 	delivered := s.fanOut(ctx, devices, payload)
-	if !delivered {
+	if delivered == 0 {
 		// Nothing reached a push service, so nothing is recorded: the reminder keeps its
 		// place in the pool rather than spending its floor on a notification nobody got.
 		s.log.Warn("nudge reached nobody", "principal", principalID, "devices", len(devices))
-		return Undelivered, nil
+		return Undelivered, 0, nil
 	}
 
 	if _, err := s.store.RecordNudge(ctx, nudgeID, principalID, chosen.ID); err != nil {
-		return Sent, err
+		return Sent, delivered, err
 	}
-	s.log.Info("nudge sent", "principal", principalID, "nudge", nudgeID, "reminder", chosen.ID)
-	return Sent, nil
+	s.log.Info("nudge sent", "principal", principalID, "nudge", nudgeID, "reminder", chosen.ID,
+		"devices", len(devices), "delivered", delivered)
+	return Sent, delivered, nil
 }
 
 // fanOut sends to every one of a person's devices at once and reports whether any of them
@@ -221,11 +225,11 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 //
 // Concurrently because a phone whose push service is slow must not delay the laptop's, and
 // because this runs inside a scheduler pass that other people's slots are waiting behind.
-func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload []byte) bool {
+func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload []byte) int {
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
-		ok bool
+		ok int
 	)
 	for _, d := range devices {
 		wg.Add(1)
@@ -241,7 +245,7 @@ func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload 
 			case err == nil:
 				s.store.DeviceDelivered(ctx, d.ID)
 				mu.Lock()
-				ok = true
+				ok++
 				mu.Unlock()
 			case webpush.Gone(err):
 				// A browser that has been reinstalled leaves an endpoint that refuses

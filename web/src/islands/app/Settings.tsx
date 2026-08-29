@@ -245,7 +245,11 @@ function Devices() {
         )}
         {test.isSuccess && test.data.sent && (
           <div className="pt-2">
-            <Note>Sent. It should be on its way.</Note>
+            <Note>
+              {test.data.delivered === 1
+                ? "Sent to one device."
+                : `Sent to ${test.data.delivered} devices — each shows its own notification.`}
+            </Note>
           </div>
         )}
         {test.error && (
