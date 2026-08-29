@@ -2,6 +2,8 @@ import { request } from "@app/api/transport";
 
 export type Device = {
   id: string;
+  /** Which browser it belongs to, or empty for a row that predates the column. */
+  client_id: string;
   label: string;
   created_at: number;
   last_ok_at: number | null;

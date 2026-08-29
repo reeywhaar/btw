@@ -68,7 +68,7 @@ export function pushState(): PushState {
  * a push subscription has. Losing it is harmless — the next registration mints another and
  * the stale row is left to be deleted when its endpoint finally answers 410.
  */
-function clientID(): string {
+export function clientID(): string {
   const key = "btw.client";
   try {
     const existing = localStorage.getItem(key);
@@ -146,6 +146,22 @@ async function send(subscription: PushSubscription): Promise<void> {
     label: label(),
     client_id: clientID(),
   });
+}
+
+/**
+ * The id if this browser has one, without minting one.
+ *
+ * The settings screen needs it only to recognise its own row in a list, and a read that
+ * quietly writes is a surprise: looking at a page would give an unregistered browser an
+ * identity it has not earned. Empty simply matches nothing, which is the right answer for a
+ * browser that has never registered.
+ */
+export function storedClientID(): string {
+  try {
+    return localStorage.getItem("btw.client") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /**

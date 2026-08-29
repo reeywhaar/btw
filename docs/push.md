@@ -189,6 +189,29 @@ a rotated subscription replaces its row rather than joining it.
 - The **service worker asks a window** for the id when it re-subscribes on its own, since a
   worker has no localStorage. With no window open the answer is empty, which collapses
   nothing — the safe direction, because a wrong id would delete a device somebody is using.
+- **Minting and reading are separate calls.** `clientID()` mints one if there is none, and is
+  only ever reached while registering; `storedClientID()` reads. The settings screen uses the
+  reader, because a page that quietly writes would give an unregistered browser an identity
+  by being looked at.
+
+### Rows the client id cannot fix
+
+It only collapses rows it can recognise, so an account that accumulated duplicates *before*
+the column existed still has them — every one of which receives its own copy of every nudge.
+Deleting them automatically is not available: a row with no client id is indistinguishable
+from a second browser that simply has not registered since, and guessing wrong would delete a
+device somebody is using.
+
+So the list says so instead. Each row this browser owns is marked, the rest are counted, and
+the sentence names the consequence — *each one is a separate copy of the same reminder* —
+because "you have three devices" is not information anybody acts on.
+
+**Whether *this* browser is registered is a different question from whether any device is**,
+and conflating them is a bug worth naming: a laptop that had never registered was told "this
+browser will receive nudges" because a phone had, and was offered no button. The same fault
+hid the button from a browser whose row predates the client id — which is precisely the
+browser that needs to press it, since registering adopts its existing row rather than adding
+one.
 
 ## What the push service learns
 

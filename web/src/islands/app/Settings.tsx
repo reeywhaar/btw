@@ -13,7 +13,14 @@ import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
 import { Select } from "@app/components/Select";
 import { Warning } from "@app/components/Warning";
-import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
+import {
+  enable,
+  installed,
+  isIOS,
+  pushState,
+  storedClientID,
+  type PushState,
+} from "@app/push";
 
 export function Settings() {
   return (
@@ -43,7 +50,18 @@ function ThisBrowser() {
   const client = useQueryClient();
 
   const devices = useQuery({ queryKey: qk.devices, queryFn: getDevices });
-  const registered = devices.isSuccess && devices.data.devices.length > 0;
+
+  // Whether *this* browser is registered, not whether any device is.
+  //
+  // It was `devices.length > 0`, which is a different question and gave the wrong answer to
+  // this one: a laptop that had never registered was told "this browser will receive
+  // nudges" because a phone had, and was offered no way to register. It also hid the button
+  // from a browser whose row predates the client id, which is exactly the browser that
+  // needs to press it — doing so adopts its existing row rather than adding one.
+  const mine = storedClientID();
+  const registered =
+    devices.isSuccess &&
+    devices.data.devices.some((d) => d.client_id && d.client_id === mine);
 
   async function turnOn() {
     setBusy(true);
@@ -147,15 +165,27 @@ function Devices() {
   const client = useQueryClient();
   const devices = useQuery({ queryKey: qk.devices, queryFn: getDevices });
   const test = useMutation({ mutationFn: postNudges });
+  const mine = storedClientID();
 
   if (!devices.isSuccess || devices.data.devices.length === 0) return null;
+
+  // Every device gets its own copy of every nudge, so a row that is not this browser and
+  // is not a phone somebody recognises is a subscription that rotated out from under them
+  // — and is why one press can arrive twice.
+  const strangers = devices.data.devices.filter(
+    (d) => !d.client_id || d.client_id !== mine,
+  );
 
   return (
     <Section title="Devices">
       {devices.data.devices.map((d) => (
         <Field
           key={d.id}
-          label={d.label || "a browser"}
+          label={
+            d.client_id && d.client_id === mine
+              ? `${d.label || "a browser"} — this one`
+              : d.label || "a browser"
+          }
           control={
             <button
               onClick={async () => {
@@ -169,6 +199,18 @@ function Devices() {
           }
         />
       ))}
+
+      {strangers.length > 0 && (
+        <Row>
+          <Note>
+            {strangers.length === 1
+              ? "One other device"
+              : `${strangers.length} other devices`}{" "}
+            will receive every nudge too. Forget any you do not recognise — each
+            one is a separate copy of the same reminder.
+          </Note>
+        </Row>
+      )}
 
       <Row>
         {/* The button that proves the chain — permission, subscription, VAPID, encryption,

@@ -26,7 +26,12 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(list))
 	for _, d := range list {
 		row := map[string]any{
-			"id":            d.ID,
+			"id": d.ID,
+			// The browser's own id, handed back so a browser can recognise its own row.
+			// Not a secret from the person it belongs to — they minted it — and without it
+			// a list of three "Chrome on Mac" says nothing about which is the one in front
+			// of you and which are subscriptions that rotated out from under it.
+			"client_id":     d.ClientID,
 			"label":         d.Label,
 			"created_at":    d.CreatedAt.Unix(),
 			"last_ok_at":    nil,
