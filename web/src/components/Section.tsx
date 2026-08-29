@@ -1,5 +1,11 @@
+import { Heading } from "@app/components/Heading";
+
 /**
  * A titled group of rows.
+ *
+ * For rows. A section whose only content is one button should be a [Heading] and that
+ * button — a bordered card drawn around a single control is a box inside a box, and says
+ * nothing except that somebody had a container to hand.
  *
  * Bordered and divided, because a settings screen without visible grouping is a flat stream
  * of labels where nothing says which header a row belongs to. The hairlines between rows do
@@ -20,9 +26,7 @@ export function Section({
 }) {
   return (
     <section>
-      <h2 className="px-1 pb-2 text-xs font-medium tracking-widest text-faint uppercase">
-        {title}
-      </h2>
+      <Heading>{title}</Heading>
       <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
         {children}
       </div>

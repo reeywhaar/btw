@@ -9,6 +9,7 @@ import { qk } from "@app/api/keys";
 import { Button } from "@app/components/Button";
 import { Check } from "@app/components/Check";
 import { Field } from "@app/components/Field";
+import { Heading } from "@app/components/Heading";
 import { Note } from "@app/components/Note";
 import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
@@ -369,18 +370,17 @@ function Hour({
 
 function Account() {
   return (
-    <Section title="Account">
-      <Row>
-        <Button
-          variant="quiet"
-          onClick={async () => {
-            await postAuthLogout();
-            window.location.replace("/login");
-          }}
-        >
-          Sign out
-        </Button>
-      </Row>
-    </Section>
+    <section>
+      <Heading>Account</Heading>
+      <Button
+        variant="quiet"
+        onClick={async () => {
+          await postAuthLogout();
+          window.location.replace("/login");
+        }}
+      >
+        Sign out
+      </Button>
+    </section>
   );
 }

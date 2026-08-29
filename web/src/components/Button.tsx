@@ -11,8 +11,11 @@
 const variants = {
   solid:
     "rounded-lg bg-fg px-4 py-2.5 text-sm font-medium text-bg disabled:opacity-50",
+  // Filled rather than outlined. Bordered, it drew a second rounded rectangle inside the
+  // one a Section already draws, and two nested borders around one control read as a
+  // mistake. A fill separates it from its background without competing with it.
   quiet:
-    "rounded-lg border border-line px-4 py-2.5 text-sm text-muted hover:border-line-strong hover:text-fg disabled:opacity-50",
+    "rounded-lg bg-line/60 px-4 py-2.5 text-sm text-fg hover:bg-line disabled:opacity-50",
   link: "text-left text-sm text-muted underline-offset-4 hover:text-fg hover:underline",
 } as const;
 

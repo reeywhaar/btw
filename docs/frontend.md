@@ -70,8 +70,8 @@ it — pushes `/` instead of reversing out of btw entirely.
 
 ## Components against islands
 
-`src/components/` holds the pieces with no opinion about what they are for: `Section`, `Row`,
-`Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
+`src/components/` holds the pieces with no opinion about what they are for: `Heading`,
+`Section`, `Row`, `Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
 btw is — `Reminders`, `ThisBrowser`, `Devices`, `RhythmPanel`, `Login`.
 
 The test for the boundary is whether a piece would need rewriting for a different product.
@@ -82,6 +82,12 @@ island that shows it.
 one thing a screen wants you to do, `quiet` for available but not urged, `link` for an action
 that reads as a sentence. It is inverted rather than coloured — `bg-fg text-bg` is
 dark-on-light in light mode and light-on-dark in dark mode, from one pair of classes.
+
+A `Section` is for **rows**. A heading whose only content is one button is a `Heading` and
+that button — a bordered card drawn around a single control is a box inside a box, and says
+nothing except that somebody had a container to hand. For the same reason `quiet` is filled
+rather than outlined: bordered, it drew a second rounded rectangle inside the one a Section
+already draws.
 
 A button sized to its content is what makes it read as one. Sign out was a `link` variant,
 which rendered as bare text adrift in a bordered card and looked like a button that did not
