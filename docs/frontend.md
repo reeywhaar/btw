@@ -71,7 +71,7 @@ it — pushes `/` instead of reversing out of btw entirely.
 ## Components against islands
 
 `src/components/` holds the pieces with no opinion about what they are for: `Section`, `Row`,
-`Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
+`RowButton`, `Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
 btw is — `Reminders`, `ThisBrowser`, `Devices`, `RhythmPanel`, `Login`.
 
 The test for the boundary is whether a piece would need rewriting for a different product.
@@ -82,6 +82,14 @@ island that shows it.
 one thing a screen wants you to do, `quiet` for available but not urged, `link` for an action
 that reads as a sentence. It is inverted rather than coloured — `bg-fg text-bg` is
 dark-on-light in light mode and light-on-dark in dark mode, from one pair of classes.
+
+`RowButton` is the fourth case: a row that *is* the button. Sign out was a link-styled
+`Button` inside a `Row`, which put a small piece of text in the corner of a large bordered
+card — so the card read as the affordance and the text did not, and nothing said where to
+press. The press target is now the row itself: full width, its own padding, a hover that
+fills it. Its `danger` variant exists for actions worth a second of hesitation; signing out
+is not one, since you sign back in, so it stays the ordinary colour and the accent keeps
+meaning something.
 
 ## The API layer
 

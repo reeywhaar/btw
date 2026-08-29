@@ -11,6 +11,7 @@ import { Check } from "@app/components/Check";
 import { Field } from "@app/components/Field";
 import { Note } from "@app/components/Note";
 import { Row } from "@app/components/Row";
+import { RowButton } from "@app/components/RowButton";
 import { Section } from "@app/components/Section";
 import { Select } from "@app/components/Select";
 import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
@@ -370,17 +371,14 @@ function Hour({
 function Account() {
   return (
     <Section title="Account">
-      <Row>
-        <Button
-          variant="link"
-          onClick={async () => {
-            await postAuthLogout();
-            window.location.replace("/login");
-          }}
-        >
-          Sign out
-        </Button>
-      </Row>
+      <RowButton
+        onClick={async () => {
+          await postAuthLogout();
+          window.location.replace("/login");
+        }}
+      >
+        Sign out
+      </RowButton>
     </Section>
   );
 }
