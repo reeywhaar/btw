@@ -189,12 +189,21 @@ function Devices() {
         >
           {test.isPending ? "sending…" : "Send one now"}
         </Button>
-        {test.isSuccess && !test.data.sent && (
+        {test.isSuccess && test.data.outcome === "nothing" && (
           <div className="pt-2">
             <Note>
-              Nothing to send: everything is finished, or was raised too
-              recently.
+              Nothing to send: everything you have written down is finished.
             </Note>
+          </div>
+        )}
+        {test.isSuccess && test.data.outcome === "undelivered" && (
+          <div className="pt-2">
+            {/* A different problem entirely, and it used to share the sentence above. One
+                is an empty list; this is a device that did not take it. */}
+            <Warning>
+              A reminder was picked, but none of your devices took it. Try
+              forgetting the device and turning nudges on again.
+            </Warning>
           </div>
         )}
         {test.isSuccess && test.data.sent && (

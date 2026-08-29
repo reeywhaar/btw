@@ -152,3 +152,30 @@ func TestPickIsReproducible(t *testing.T) {
 		t.Errorf("one seed gave two answers: %q then %q", first.ID, second.ID)
 	}
 }
+
+func TestSomethingIsAlwaysDrawnWhenThePoolIsNotEmpty(t *testing.T) {
+	// What "send one now" hands over: everything live, floor ignored, so every candidate
+	// may have been nudged a moment ago and every weight is zero.
+	justNudged := candidate("r_one", 50, 0)
+	justNudged.LastNudgedAt = now
+	other := candidate("r_two", 50, 0)
+	other.LastNudgedAt = now
+
+	got, ok := Pick([]store.Candidate{justNudged, other}, now, "", "seed")
+	if !ok {
+		t.Fatal("Pick() found nothing to send from a pool of two")
+	}
+	if got.ID != "r_one" && got.ID != "r_two" {
+		t.Fatalf("Pick() returned %q, which is neither candidate", got.ID)
+	}
+}
+
+func TestSilencedRemindersAreNeverDrawnEvenWithNothingElse(t *testing.T) {
+	silenced := candidate("r_silenced", 0, 0)
+	silenced.LastNudgedAt = now
+
+	// The uniform fallback must not reach past the one rule that means "not ever".
+	if _, ok := Pick([]store.Candidate{silenced}, now, "", "seed"); ok {
+		t.Error("Pick() drew a silenced reminder through the fallback")
+	}
+}

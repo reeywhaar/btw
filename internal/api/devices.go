@@ -90,15 +90,18 @@ func (s *Server) nudgeNow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "give it a minute")
 		return
 	}
-	sent, err := s.nudger.NudgeNow(r.Context(), p.ID)
+	outcome, err := s.nudger.NudgeNow(r.Context(), p.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	// `sent: false` is a 200 rather than an error, because "nothing is eligible right now"
-	// is a state the interface explains — everything is either done or inside its own
-	// interval — and not a failure of the button.
-	writeJSON(w, http.StatusOK, map[string]any{"sent": sent})
+	// A 200 whatever the outcome: none of the three is a failure of the request. Which one
+	// it was rides in the body, because "nothing to send" and "nothing reached your phone"
+	// send somebody to two different places.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sent":    outcome == "sent",
+		"outcome": outcome,
+	})
 }
 
 func (s *Server) actOnNudge(w http.ResponseWriter, r *http.Request) {

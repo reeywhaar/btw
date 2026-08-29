@@ -224,7 +224,10 @@ phone raises exactly the same question.
 It goes through the identical path a scheduled nudge takes. A test button that takes a
 shortcut tests the shortcut.
 
-`{"sent": false}` is a `200`. See [nudges.md](nudges.md#nothing-eligible-sends-nothing-at-all).
+It answers `200` with an `outcome` of `sent`, `nothing` or `undelivered` — none of them an
+error, and the last two are different problems. It also ignores each reminder's own interval,
+which the scheduled path does not. Both in
+[nudges.md](nudges.md#the-floor-is-the-schedulers-rule-not-the-buttons).
 
 ## Handler conventions
 

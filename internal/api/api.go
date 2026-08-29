@@ -35,7 +35,7 @@ const maxBody = 64 << 10
 // that imports it — and so a test can drive the "send me one" button without a push
 // service on the other end.
 type Nudger interface {
-	NudgeNow(ctx context.Context, principalID string) (sent bool, err error)
+	NudgeNow(ctx context.Context, principalID string) (outcome string, err error)
 }
 
 // Server holds what every handler needs.

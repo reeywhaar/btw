@@ -30,6 +30,26 @@ const Tick = time.Minute
 // sweepEvery is how often expired sessions and stale slots are cleared.
 const sweepEvery = 10 * time.Minute
 
+// Outcome says what happened to a nudge somebody asked for.
+//
+// Three answers rather than a bool, because two of the three failures are different
+// afternoons and a caller that cannot tell them apart has to guess at the message. "Nothing
+// to send" when the truth was "nothing reached your phone" is the kind of excuse that sends
+// somebody looking in the wrong place.
+// An alias rather than a defined type, so internal/api can declare its one-method Nudger
+// interface in terms of `string` and not have to import this package — which is what keeps
+// the dependency running one way.
+type Outcome = string
+
+const (
+	// Sent means at least one device took it.
+	Sent Outcome = "sent"
+	// NothingToSend means the pool was empty: everything is finished or silenced.
+	NothingToSend Outcome = "nothing"
+	// Undelivered means something was chosen and no push service would take it.
+	Undelivered Outcome = "undelivered"
+)
+
 // Scheduler plans days, fires slots, and sends.
 type Scheduler struct {
 	store *store.Store
@@ -96,7 +116,7 @@ func (s *Scheduler) pass(ctx context.Context) {
 		if !got {
 			continue
 		}
-		if _, err := s.deliver(ctx, slot.PrincipalID); err != nil {
+		if _, err := s.deliver(ctx, slot.PrincipalID, store.RespectFloor); err != nil {
 			s.log.Error("could not deliver a nudge", "principal", slot.PrincipalID, "err", err)
 		}
 	}
@@ -131,23 +151,25 @@ func (s *Scheduler) plan(ctx context.Context, principalID string, now time.Time)
 
 // NudgeNow sends one immediately, for the button that proves the chain.
 //
-// It goes through exactly the same path as a scheduled nudge — same selection, same
-// encryption, same log — because a test button that takes a shortcut tests the shortcut.
-func (s *Scheduler) NudgeNow(ctx context.Context, principalID string) (bool, error) {
-	return s.deliver(ctx, principalID)
+// The same path as a scheduled nudge — same selection, same encryption, same log — because
+// a test button that takes a shortcut tests the shortcut. It differs in one rule, and only
+// one: a reminder's own interval does not apply. Somebody pressing this has asked for a
+// nudge, and "that was raised too recently" refuses a request nobody made on their behalf.
+func (s *Scheduler) NudgeNow(ctx context.Context, principalID string) (Outcome, error) {
+	return s.deliver(ctx, principalID, store.IgnoreFloor)
 }
 
 // deliver chooses a reminder and sends it, and reports whether anything went out.
-func (s *Scheduler) deliver(ctx context.Context, principalID string) (bool, error) {
+func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store.Floor) (Outcome, error) {
 	now := s.store.Now()
 
-	candidates, err := s.store.Candidates(ctx, principalID, now)
+	candidates, err := s.store.Candidates(ctx, principalID, now, floor)
 	if err != nil {
-		return false, err
+		return NothingToSend, err
 	}
 	last, err := s.store.LastNudgedReminder(ctx, principalID)
 	if err != nil {
-		return false, err
+		return NothingToSend, err
 	}
 
 	// The id is minted before the choice because it seeds it, and because it has to travel
@@ -160,15 +182,15 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string) (bool, erro
 		// reminder, or repeating this morning's, is how a notification channel gets turned
 		// off for good by somebody who was otherwise happy with it.
 		s.log.Debug("nothing to nudge with", "principal", principalID, "candidates", len(candidates))
-		return false, nil
+		return NothingToSend, nil
 	}
 
 	devices, err := s.store.Devices(ctx, principalID)
 	if err != nil {
-		return false, err
+		return NothingToSend, err
 	}
 	if len(devices) == 0 {
-		return false, nil
+		return Undelivered, nil
 	}
 
 	payload, err := json.Marshal(map[string]string{
@@ -176,7 +198,7 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string) (bool, erro
 		"text":     chosen.Text,
 	})
 	if err != nil {
-		return false, err
+		return NothingToSend, err
 	}
 
 	delivered := s.fanOut(ctx, devices, payload)
@@ -184,14 +206,14 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string) (bool, erro
 		// Nothing reached a push service, so nothing is recorded: the reminder keeps its
 		// place in the pool rather than spending its floor on a notification nobody got.
 		s.log.Warn("nudge reached nobody", "principal", principalID, "devices", len(devices))
-		return false, nil
+		return Undelivered, nil
 	}
 
 	if _, err := s.store.RecordNudge(ctx, nudgeID, principalID, chosen.ID); err != nil {
-		return true, err
+		return Sent, err
 	}
 	s.log.Info("nudge sent", "principal", principalID, "nudge", nudgeID, "reminder", chosen.ID)
-	return true, nil
+	return Sent, nil
 }
 
 // fanOut sends to every one of a person's devices at once and reports whether any of them

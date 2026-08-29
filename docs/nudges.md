@@ -153,9 +153,42 @@ silences it, which a sort would fail to give.
 Not the next-least-ineligible reminder. Not a repeat of this morning's. Nothing.
 
 Sending something rather than nothing is how a notification channel gets turned off for good
-by somebody who was otherwise happy with it. `POST /api/nudges` answers `{"sent": false}` with
-a `200` for the same reason: "everything is finished, or was raised too recently" is a state
-the interface explains, not a failure of the button.
+by somebody who was otherwise happy with it.
+
+### The floor is the scheduler's rule, not the button's
+
+`min_interval` governs when the **scheduler** may raise something. `POST /api/nudges` — the
+"send one now" button — ignores it.
+
+It did not, and refusing there was nonsense: the button exists to prove the chain works, and a
+button that answers "that was raised too recently" to somebody who just pressed it proves
+nothing and looks broken. Somebody pressing it has asked for a nudge. The floor stops the same
+thing arriving twice in a morning *unasked*, which is a different thing entirely.
+
+Two rules still hold on that path, because they are not about timing. A finished reminder is
+not sent, and neither is a silenced one — `priority = 0` is the difference between "not now"
+and "not ever", and only the first is the button's business.
+
+One consequence reaches `internal/pick`: with the floor ignored, every candidate may have been
+nudged a moment ago, so every weight can be zero. Weighting has nothing left to say there, so
+the choice falls back to uniform rather than to nothing — somebody pressed a button and the
+pool is not empty. Silenced reminders are dropped before that fallback rather than merely
+weighted to zero, so "never" survives it.
+
+### Three answers, because two of the failures are different afternoons
+
+`POST /api/nudges` answers `200` with an `outcome`, and none of the three is an error:
+
+| outcome | what happened |
+| --- | --- |
+| `sent` | at least one device took it |
+| `nothing` | the pool was empty — everything is finished or silenced |
+| `undelivered` | a reminder was chosen and no push service would take it |
+
+The last two shared a sentence once, and it sent people to the wrong place. An empty list is
+something to fix by writing something down; a device that will not take a push is something to
+fix by re-registering it. A button that gives the first explanation for the second problem is a
+button nobody trusts twice.
 
 ## What happens when it arrives
 

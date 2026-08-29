@@ -173,12 +173,8 @@ func TestAReminderArrivesReadableOnTheDevice(t *testing.T) {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
 
-	sent, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
-	if err != nil {
-		t.Fatalf("NudgeNow(): %v", err)
-	}
-	if !sent {
-		t.Fatal("NudgeNow() sent nothing")
+	if got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil || got != Sent {
+		t.Fatalf("NudgeNow() = %q, %v; want %q", got, err, Sent)
 	}
 	if r.service.count() != 1 {
 		t.Fatalf("the push service got %d requests, want 1", r.service.count())
@@ -230,12 +226,12 @@ func TestNothingEligibleSendsNothingAtAll(t *testing.T) {
 	r := newRig(t)
 	// No reminders. Reaching for something to send anyway is how a notification channel
 	// gets turned off for good.
-	sent, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
+	got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
 	if err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
-	if sent || r.service.count() != 0 {
-		t.Fatalf("sent=%v, requests=%d; want nothing to leave the process", sent, r.service.count())
+	if got != NothingToSend || r.service.count() != 0 {
+		t.Fatalf("outcome=%q, requests=%d; want %q and nothing to leave the process", got, r.service.count(), NothingToSend)
 	}
 }
 
@@ -246,16 +242,18 @@ func TestARemindersFloorIsNotSpentOnAMessageThatNeverLeft(t *testing.T) {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
 
-	sent, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
+	got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
 	if err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
-	if sent {
-		t.Fatal("NudgeNow() claimed to have sent something the push service refused")
+	// Not "nothing to send": something was chosen, and no push service would take it. The
+	// two send somebody to different places.
+	if got != Undelivered {
+		t.Fatalf("outcome = %q, want %q", got, Undelivered)
 	}
 	// Nothing was delivered, so nothing was raised: the reminder keeps its place rather
 	// than going quiet for a day over a notification nobody got.
-	if got, _ := r.store.Candidates(t.Context(), r.principal.ID, r.store.Now()); len(got) != 1 {
+	if got, _ := r.store.Candidates(t.Context(), r.principal.ID, r.store.Now(), store.RespectFloor); len(got) != 1 {
 		t.Errorf("the reminder is no longer eligible; its floor was spent on a failed send")
 	}
 }
@@ -321,5 +319,50 @@ func TestASlotFiresOnceAndPlansLazily(t *testing.T) {
 	// reminder at a one-day interval can only be raised once.
 	if sent > store.DefaultBudget {
 		t.Errorf("%d nudges in one day, want at most the budget of %d", sent, store.DefaultBudget)
+	}
+}
+
+func TestTheButtonSendsSomethingItJustSent(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.store.CreateReminder(t.Context(), r.principal.ID, "go to the circus"); err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	// Twice in a row, with one reminder whose floor is a whole day. The first press spends
+	// the floor; the second must still send, because a button that usually declines proves
+	// nothing about the chain it exists to prove.
+	for i := range 2 {
+		got, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID)
+		if err != nil {
+			t.Fatalf("NudgeNow() %d: %v", i+1, err)
+		}
+		if got != Sent {
+			t.Fatalf("press %d = %q, want %q", i+1, got, Sent)
+		}
+	}
+	if r.service.count() != 2 {
+		t.Errorf("the push service got %d requests, want 2", r.service.count())
+	}
+}
+
+func TestTheSchedulerStillWaitsOutTheFloor(t *testing.T) {
+	r := newRig(t)
+	r.store.CreateReminder(t.Context(), r.principal.ID, "go to the circus")
+
+	// The button ignoring the floor must not have taken it away from the scheduler, which
+	// is what stops the same thing arriving twice in one morning.
+	if _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+		t.Fatalf("NudgeNow(): %v", err)
+	}
+	before := r.service.count()
+
+	now := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+	r.store.SetClock(func() time.Time { return now })
+	for range 4 * 12 {
+		now = now.Add(15 * time.Minute)
+		r.scheduler.pass(t.Context())
+	}
+	if r.service.count() != before {
+		t.Errorf("the scheduler sent %d more inside the reminder's own interval", r.service.count()-before)
 	}
 }

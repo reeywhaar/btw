@@ -146,7 +146,7 @@ func TestCandidatesRespectTheFloor(t *testing.T) {
 	}
 
 	// Never nudged: eligible.
-	if got, _ := s.Candidates(ctx, p.ID, now); len(got) != 1 {
+	if got, _ := s.Candidates(ctx, p.ID, now, RespectFloor); len(got) != 1 {
 		t.Fatalf("Candidates() before any nudge = %d, want 1", len(got))
 	}
 
@@ -154,11 +154,11 @@ func TestCandidatesRespectTheFloor(t *testing.T) {
 		t.Fatalf("RecordNudge(): %v", err)
 	}
 	// Just nudged: inside its own floor, so not offered again.
-	if got, _ := s.Candidates(ctx, p.ID, now); len(got) != 0 {
+	if got, _ := s.Candidates(ctx, p.ID, now, RespectFloor); len(got) != 0 {
 		t.Fatalf("Candidates() inside the floor = %d, want 0", len(got))
 	}
 	// A day later the floor has passed.
-	if got, _ := s.Candidates(ctx, p.ID, now.Add(DefaultMinInterval)); len(got) != 1 {
+	if got, _ := s.Candidates(ctx, p.ID, now.Add(DefaultMinInterval), RespectFloor); len(got) != 1 {
 		t.Fatalf("Candidates() past the floor = %d, want 1", len(got))
 	}
 }
@@ -175,7 +175,7 @@ func TestEndingAReminderTakesItOutOfTheRunning(t *testing.T) {
 	if err := s.EndReminder(ctx, p.ID, r.ID); err != nil {
 		t.Fatalf("EndReminder(): %v", err)
 	}
-	if got, _ := s.Candidates(ctx, p.ID, s.Now()); len(got) != 0 {
+	if got, _ := s.Candidates(ctx, p.ID, s.Now(), RespectFloor); len(got) != 0 {
 		t.Fatalf("Candidates() after ending = %d, want 0", len(got))
 	}
 	// Ending twice is not an error: a notification answered after the app already ended it
@@ -200,7 +200,7 @@ func TestARemindersFloorSurvivesLosingTheLog(t *testing.T) {
 	if _, err := s.derived.ExecContext(ctx, `DELETE FROM nudges`); err != nil {
 		t.Fatalf("clear log: %v", err)
 	}
-	if got, _ := s.Candidates(ctx, p.ID, s.Now()); len(got) != 0 {
+	if got, _ := s.Candidates(ctx, p.ID, s.Now(), RespectFloor); len(got) != 0 {
 		t.Fatalf("Candidates() after losing the log = %d, want 0", len(got))
 	}
 }
@@ -547,5 +547,62 @@ func TestAFailedChangeLeavesTheAddressThatWorked(t *testing.T) {
 	}
 	if got, _ := s.PendingRecovery(ctx, p.ID); got != "" {
 		t.Errorf("the abandoned attempt survived: %q", got)
+	}
+}
+
+func TestTheFloorHoldsForTheSchedulerAndNotForAButton(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	r, err := s.CreateReminder(ctx, p.ID, "go to the circus")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	if _, err := s.RecordNudge(ctx, NewNudgeID(), p.ID, r.ID); err != nil {
+		t.Fatalf("RecordNudge(): %v", err)
+	}
+
+	now := s.Now()
+	if got, _ := s.Candidates(ctx, p.ID, now, RespectFloor); len(got) != 0 {
+		t.Errorf("a scheduled draw offered %d inside the floor, want 0", len(got))
+	}
+	// Somebody pressing a button has asked for a nudge; "that was raised too recently" is
+	// refusing a request nobody made on their behalf.
+	if got, _ := s.Candidates(ctx, p.ID, now, IgnoreFloor); len(got) != 1 {
+		t.Errorf("a manual draw offered %d, want the reminder", len(got))
+	}
+}
+
+func TestSilencingSurvivesEvenAManualDraw(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	r, _ := s.CreateReminder(ctx, p.ID, "never mention this")
+	if _, err := s.main.ExecContext(ctx, `UPDATE reminders SET priority = 0 WHERE id = ?`, r.ID); err != nil {
+		t.Fatalf("silence: %v", err)
+	}
+	// Zero is the difference between "not now" and "not ever", so it holds either way.
+	for _, floor := range []Floor{RespectFloor, IgnoreFloor} {
+		if got, _ := s.Candidates(ctx, p.ID, s.Now(), floor); len(got) != 0 {
+			t.Errorf("floor=%v offered a silenced reminder", floor)
+		}
+	}
+}
+
+func TestADoneReminderIsNeverDrawnEitherWay(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	r, _ := s.CreateReminder(ctx, p.ID, "ring the dentist")
+	if err := s.EndReminder(ctx, p.ID, r.ID); err != nil {
+		t.Fatalf("EndReminder(): %v", err)
+	}
+	for _, floor := range []Floor{RespectFloor, IgnoreFloor} {
+		if got, _ := s.Candidates(ctx, p.ID, s.Now(), floor); len(got) != 0 {
+			t.Errorf("floor=%v offered a finished reminder", floor)
+		}
 	}
 }

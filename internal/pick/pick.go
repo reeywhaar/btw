@@ -39,10 +39,19 @@ const StalenessCap = 4.0
 // morning's, is how a notification channel gets turned off for good by somebody who was
 // otherwise happy with it.
 func Pick(candidates []store.Candidate, now time.Time, exclude, seed string) (store.Candidate, bool) {
-	eligible := candidates
+	// Silenced reminders are dropped here and not merely weighted to zero. The store filters
+	// them too, but the rule belongs to this function: the uniform fallback below would
+	// otherwise draw one, and "zero means never" would hold only as long as every caller
+	// remembered to filter first.
+	eligible := make([]store.Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Priority > 0 {
+			eligible = append(eligible, c)
+		}
+	}
 	if exclude != "" {
-		filtered := make([]store.Candidate, 0, len(candidates))
-		for _, c := range candidates {
+		filtered := make([]store.Candidate, 0, len(eligible))
+		for _, c := range eligible {
 			if c.ID != exclude {
 				filtered = append(filtered, c)
 			}
@@ -63,8 +72,16 @@ func Pick(candidates []store.Candidate, now time.Time, exclude, seed string) (st
 		weights[i] = Weight(c, now)
 		total += weights[i]
 	}
+
+	// Every weight zero, and yet there is something to send.
+	//
+	// It cannot happen on a scheduled draw — the floor guarantees a reminder has been
+	// waiting at least one interval, so its staleness is at least one. It happens on a
+	// manual one, where the floor is ignored and everything offered may have been nudged a
+	// moment ago. Weighting has nothing left to say there, so the choice is uniform rather
+	// than nothing: somebody pressed a button, and the pool is not empty.
 	if total <= 0 {
-		return store.Candidate{}, false
+		return eligible[int(rand.New(rand.NewPCG(seedFrom(seed), 0x9E3779B97F4A7C15)).Uint64()%uint64(len(eligible)))], true
 	}
 
 	rng := rand.New(rand.NewPCG(seedFrom(seed), 0x9E3779B97F4A7C15))

@@ -20,25 +20,47 @@ type Candidate struct {
 	LastNudgedAt time.Time
 }
 
-// Candidates returns the reminders eligible to be sent right now.
+// Floor says whether a reminder's own minimum interval applies to this draw.
+type Floor bool
+
+const (
+	// RespectFloor is what a scheduled nudge uses. A reminder inside its own interval is
+	// not offered, which is most of what stops the same thing arriving twice in a morning.
+	RespectFloor Floor = true
+
+	// IgnoreFloor is what "send one now" uses.
+	//
+	// The floor governs when the *scheduler* may raise something. Somebody pressing a
+	// button has asked for a nudge, and answering "that was raised too recently" is
+	// refusing a request nobody made on their behalf — the button exists to prove the chain
+	// works, and a button that usually declines proves nothing.
+	IgnoreFloor Floor = false
+)
+
+// Candidates returns the reminders that could be sent right now.
 //
 // The eligibility rules are here, in SQL, and the weighting is in internal/pick. The split
 // is deliberate: eligibility is a hard filter that a database index can serve, and
 // weighting is arithmetic over a handful of rows that wants to be testable against a fixed
 // seed without a database.
 //
-// Not done, priority above zero, and past its own floor. Zero priority is somebody
-// silencing one reminder deliberately — a real setting, and the only way to keep something
-// written down without it ever arriving.
-func (s *Store) Candidates(ctx context.Context, principalID string, now time.Time) ([]Candidate, error) {
-	rows, err := s.main.QueryContext(ctx,
-		`SELECT id, text, priority, min_interval, last_nudged_at
+// Not done and priority above zero, always. Zero priority is somebody silencing one
+// reminder deliberately — a real setting, and the only way to keep something written down
+// without it ever arriving — so it holds even for a manual send, which is the difference
+// between "not now" and "not ever".
+func (s *Store) Candidates(ctx context.Context, principalID string, now time.Time, floor Floor) ([]Candidate, error) {
+	query := `SELECT id, text, priority, min_interval, last_nudged_at
 		   FROM reminders
 		  WHERE principal_id = ?
 		    AND done_at IS NULL
-		    AND priority > 0
-		    AND (last_nudged_at IS NULL OR last_nudged_at + min_interval <= ?)`,
-		principalID, unix(now))
+		    AND priority > 0`
+	args := []any{principalID}
+	if floor == RespectFloor {
+		query += ` AND (last_nudged_at IS NULL OR last_nudged_at + min_interval <= ?)`
+		args = append(args, unix(now))
+	}
+
+	rows, err := s.main.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read candidates: %w", err)
 	}

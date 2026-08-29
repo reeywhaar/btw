@@ -21,13 +21,16 @@ import (
 // fakeNudger stands in for the scheduler, so the button can be tested without a push
 // service on the other end.
 type fakeNudger struct {
-	called bool
-	sent   bool
+	called  bool
+	outcome string
 }
 
-func (f *fakeNudger) NudgeNow(context.Context, string) (bool, error) {
+func (f *fakeNudger) NudgeNow(context.Context, string) (string, error) {
 	f.called = true
-	return f.sent, nil
+	if f.outcome == "" {
+		return "nothing", nil
+	}
+	return f.outcome, nil
 }
 
 type harness struct {
@@ -359,7 +362,7 @@ func TestTheRhythmNeverSaysWhenTheNextNudgeIs(t *testing.T) {
 func TestTheTestButtonGoesThroughTheScheduler(t *testing.T) {
 	h := newHarness(t)
 	h.signIn()
-	h.nudger.sent = true
+	h.nudger.outcome = "sent"
 
 	var got struct {
 		Sent bool `json:"sent"`
@@ -376,7 +379,7 @@ func TestTheTestButtonGoesThroughTheScheduler(t *testing.T) {
 func TestNothingEligibleIsNotAnError(t *testing.T) {
 	h := newHarness(t)
 	h.signIn()
-	h.nudger.sent = false
+	h.nudger.outcome = "nothing"
 
 	resp := h.do("POST", "/api/nudges", nil)
 	defer resp.Body.Close()
