@@ -650,3 +650,70 @@ func TestARecoveryAddressIsOnlyProvedByItsCode(t *testing.T) {
 		t.Errorf("the address survived being forgotten: %q", after.Email)
 	}
 }
+
+func TestChangingAPasswordKeepsThisSessionAndEndsTheOthers(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	here := h.cookie
+
+	// A second device, signed in with the same account.
+	elsewhere := store.NewSessionToken()
+	if err := h.store.CreateSession(h.Context(), elsewhere, p.ID); err != nil {
+		t.Fatalf("CreateSession(): %v", err)
+	}
+
+	resp := h.do("POST", "/api/auth/password", map[string]string{
+		"current_password": "a-good-password",
+		"new_password":     "a-better-password",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %s, want 204", resp.Status)
+	}
+
+	// Signing somebody out of the tab they are typing in would be a strange way to confirm
+	// it worked — but the token is new, so the credential rotates at the moment somebody is
+	// worried enough about it to be here.
+	var reissued string
+	for _, c := range resp.Cookies() {
+		if c.Name == SessionCookie {
+			reissued = c.Value
+		}
+	}
+	if reissued == "" {
+		t.Fatal("no session was re-issued")
+	}
+	if reissued == here {
+		t.Error("the same token came back; a password change should rotate it")
+	}
+	if _, _, err := h.store.Session(h.Context(), reissued); err != nil {
+		t.Errorf("the re-issued session does not resolve: %v", err)
+	}
+	if _, _, err := h.store.Session(h.Context(), elsewhere); err == nil {
+		t.Error("the other device is still signed in")
+	}
+
+	// And the password actually changed.
+	if _, err := h.store.Authenticate(h.Context(), "misha", "a-better-password"); err != nil {
+		t.Errorf("the new password does not work: %v", err)
+	}
+}
+
+func TestChangingAPasswordNeedsTheCurrentOne(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	resp := h.do("POST", "/api/auth/password", map[string]string{
+		"current_password": "not-it",
+		"new_password":     "a-better-password",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %s, want 400", resp.Status)
+	}
+	// Being signed in is not the same as knowing it: a borrowed session must not be a way
+	// to take the account.
+	if _, err := h.store.Authenticate(h.Context(), "misha", "a-good-password"); err != nil {
+		t.Error("the old password stopped working after a refused change")
+	}
+}

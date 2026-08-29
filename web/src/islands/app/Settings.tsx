@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { postAuthLogout } from "@app/api/actions/auth";
 import { deleteDevicesById, getDevices } from "@app/api/actions/devices";
 import { postNudges } from "@app/api/actions/nudges";
 import { getRhythm, patchRhythm } from "@app/api/actions/rhythm";
@@ -9,13 +8,11 @@ import { qk } from "@app/api/keys";
 import { Button } from "@app/components/Button";
 import { Check } from "@app/components/Check";
 import { Field } from "@app/components/Field";
-import { Heading } from "@app/components/Heading";
 import { Note } from "@app/components/Note";
 import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
 import { Select } from "@app/components/Select";
 import { Warning } from "@app/components/Warning";
-import { Recovery } from "@app/islands/app/Recovery";
 import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
 
 export function Settings() {
@@ -24,8 +21,6 @@ export function Settings() {
       <ThisBrowser />
       <Devices />
       <RhythmPanel />
-      <Recovery />
-      <Account />
     </main>
   );
 }
@@ -377,22 +372,5 @@ function Hour({
         </option>
       ))}
     </Select>
-  );
-}
-
-function Account() {
-  return (
-    <section className="space-y-3">
-      <Heading>Account</Heading>
-      <Button
-        variant="quiet"
-        onClick={async () => {
-          await postAuthLogout();
-          window.location.replace("/login");
-        }}
-      >
-        Sign out
-      </Button>
-    </section>
   );
 }

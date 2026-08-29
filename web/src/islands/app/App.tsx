@@ -5,6 +5,8 @@ import { getAuthMe } from "@app/api/actions/auth";
 import { getDevices } from "@app/api/actions/devices";
 import { qk } from "@app/api/keys";
 import { ApiError } from "@app/api/transport";
+import { PersonIcon } from "@app/components/icons/PersonIcon";
+import { Account } from "@app/islands/app/Account";
 import { Reminders } from "@app/islands/app/Reminders";
 import { useRoute } from "@app/islands/app/route";
 import { Settings } from "@app/islands/app/Settings";
@@ -101,24 +103,28 @@ export function App() {
         >
           btw
         </button>
-        <nav className="flex items-baseline gap-4">
-          <button
-            onClick={() => go(view === "settings" ? "list" : "settings")}
-            className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
+        {/* Where you are is drawn in the foreground colour rather than hidden, so the nav is
+            the same three items on every screen and one of them is lit. A nav that changes
+            its labels by screen is a nav you have to read before you can use. */}
+        <nav className="flex items-baseline gap-4 text-sm">
+          <NavButton
+            active={view === "settings"}
+            onClick={() => go("settings")}
           >
-            {view === "settings" ? "back" : "settings"}
-          </button>
-          {/* In the masthead rather than buried in settings, which is where it was and
-              where nobody found it. It decides only whether to draw the link; every route
-              behind it is refused server-side by requireAdmin. */}
+            settings
+          </NavButton>
           {me.data.role === "admin" && (
             <a
               href="/admin"
-              className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
+              className="text-muted underline-offset-4 hover:text-fg hover:underline"
             >
               admin
             </a>
           )}
+          <NavButton active={view === "account"} onClick={() => go("account")}>
+            <PersonIcon className="text-base" />
+            {me.data.username}
+          </NavButton>
         </nav>
       </header>
 
@@ -129,7 +135,9 @@ export function App() {
         <SilenceBar why={why} onAct={() => go("settings")} />
       )}
 
-      {view === "list" ? <Reminders /> : <Settings />}
+      {view === "list" && <Reminders />}
+      {view === "settings" && <Settings />}
+      {view === "account" && <Account />}
     </Shell>
   );
 }
@@ -155,6 +163,29 @@ function SilenceBar({
       className={`${box} border-accent/40 bg-accent/10 text-accent`}
     >
       {why.text}
+    </button>
+  );
+}
+
+function NavButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className={
+        "flex items-baseline gap-1.5 underline-offset-4 hover:underline " +
+        (active ? "text-fg" : "text-muted hover:text-fg")
+      }
+    >
+      {children}
     </button>
   );
 }

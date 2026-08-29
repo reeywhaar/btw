@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 
 /**
- * The two places this island has, addressed by URL.
+ * The places this island has, addressed by URL.
  *
- * The History API directly rather than react-router: two routes and no parameters is less
- * code than the configuration a router needs, and the whole of it is below. When a third
- * route arrives with a parameter in it, that is the moment the dependency earns its place.
+ * The History API directly rather than react-router: three routes and no parameters is less
+ * code than the configuration a router needs, and the whole of it is below. When a route
+ * arrives with a parameter in it, that is the moment the dependency earns its place.
  *
  * Using the URL at all is not a nicety. An installed web app has no address bar and no
  * back button of its own, so the *system* back gesture is the only way out of a screen —
  * and a screen that is a useState rather than a route answers that gesture by closing the
  * application.
  */
-export type Route = "list" | "settings";
+export type Route = "list" | "settings" | "account";
 
-const PATHS: Record<Route, string> = { list: "/", settings: "/settings" };
+const PATHS: Record<Route, string> = {
+  list: "/",
+  settings: "/settings",
+  account: "/account",
+};
 
 function routeFor(pathname: string): Route {
-  return pathname.startsWith("/settings") ? "settings" : "list";
+  if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/account")) return "account";
+  return "list";
 }
 
 /** Marks the entries this island pushed, so going back can tell its own history from the

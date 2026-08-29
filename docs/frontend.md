@@ -18,11 +18,17 @@ web/
       actions/                one module per API root
     components/               the shared primitives, below
     islands/
-      app/                    the list, settings, routing
+      app/                    the list, settings, the account, routing
       login/                  signing in, accepting an invitation
     push.ts                   subscribing, and what this browser can do
     main.css                  tokens, and the two rules that are not utilities
 ```
+
+The app island has three routes — `/`, `/settings`, `/account` — and one masthead across all
+of them: `settings`, `admin` when the account is one, and the person's own name behind a
+mark. Where you are is drawn in the foreground colour rather than hidden, so the nav is the
+same three items everywhere and one of them is lit. A nav that renames its items by screen is
+a nav you have to read before you can use.
 
 **islands, not apps.** An island is what these are — one shell, one entry, one audience, no
 routing between them — and `apps/` said nothing except that it held more than one thing.
@@ -96,6 +102,21 @@ work. Widening the press target to fill the row does not fix that — a full-wid
 its label hard against the left edge still reads as a stretched box rather than a button. Either
 it hugs its content or its label is centred; the two are what make a shape look pressable, and
 `quiet` gives the first.
+
+## Account against settings
+
+Two pages, split on subject rather than on convenience. **Settings** is how nudges behave —
+this browser, the devices, the rhythm. **Account** is the account itself: who you are signed
+in as, the password, the recovery address, signing out.
+
+Sign out and the recovery address started on settings and moved. They are what somebody
+arrives looking for rather than what they stumble into while adjusting something else, and a
+page called Settings that also holds the way out of the product is a page with two subjects.
+
+Changing a password ends every other session and keeps this one — that is what people mean by
+it, and signing them out of the tab they are typing in would be a strange way to confirm it
+worked. The token is re-minted rather than restored, so the credential rotates at the moment
+somebody is worried enough about it to be there.
 
 ## The API layer
 

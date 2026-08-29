@@ -28,6 +28,19 @@ export const postAuthLogin = (username: string, password: string) =>
 export const postAuthLogout = () =>
   request<void>("/api/auth/logout", { method: "POST" });
 
+/**
+ * Ends every other session and keeps this one, with a freshly minted token — which rotates
+ * the credential at the moment somebody is worried enough about it to be here.
+ */
+export const postAuthPassword = (
+  currentPassword: string,
+  newPassword: string,
+) =>
+  request<void>("/api/auth/password", {
+    method: "POST",
+    body: { current_password: currentPassword, new_password: newPassword },
+  });
+
 export const getAuthInvitesByToken = (token: string) =>
   request<Invite>(`/api/auth/invites/${encodeURIComponent(token)}`);
 

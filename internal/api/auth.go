@@ -43,6 +43,57 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// changePassword replaces a password, ends every other session, and keeps this one.
+//
+// "Changing my password signs out my other devices" is what people mean by it, and signing
+// them out of the tab they are typing in would be a strange way to confirm it worked.
+//
+// The store ends *every* session, this one included — which is the safe direction, since a
+// half-applied change that left sessions alive behind a new password would be the bad kind
+// of failure. So this mints a fresh session afterwards. The token is new rather than
+// restored, which rotates the credential at exactly the moment somebody is worried enough
+// about it to be here.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	p := principal(r)
+
+	// Bounded even though the caller already holds a session: a borrowed one should not be
+	// a place to guess the password at bcrypt's expense.
+	if !s.passwordLimit.allow(p.ID) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts; wait a minute")
+		return
+	}
+	if _, err := s.store.Authenticate(r.Context(), p.Username, req.CurrentPassword); err != nil {
+		s.log.Info("password change refused", "principal", p.ID)
+		writeError(w, http.StatusBadRequest, "that is not your current password")
+		return
+	}
+
+	if err := s.store.SetPassword(r.Context(), p.ID, req.NewPassword); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	token := store.NewSessionToken()
+	if err := s.store.CreateSession(r.Context(), token, p.ID); err != nil {
+		// The password did change. Saying so and sending them to sign in again is the
+		// honest answer; pretending it failed would have them try the old one.
+		s.log.Error("could not re-establish the session after a password change", "principal", p.ID, "err", err)
+		s.clearSession(w)
+		writeError(w, http.StatusOK, "your password changed, but you will need to sign in again")
+		return
+	}
+	s.log.Info("password changed", "principal", p.ID)
+	s.setSession(w, token)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(SessionCookie); err == nil {
 		s.store.DeleteSession(r.Context(), cookie.Value)

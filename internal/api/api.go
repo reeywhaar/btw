@@ -51,6 +51,7 @@ type Server struct {
 	// a test suite is — would otherwise share one budget and lock each other out.
 	loginGlobal   *limiter
 	loginPerUser  *limiter
+	passwordLimit *limiter
 	nudgeNowLimit *limiter
 }
 
@@ -58,8 +59,9 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, push *webpush.Sender, nudger Nudger, spa *SPA) *Server {
 	return &Server{
 		cfg: cfg, store: st, log: log, push: push, nudger: nudger, spa: spa,
-		loginGlobal:  newLimiter(60, time.Minute),
-		loginPerUser: newLimiter(5, time.Minute),
+		loginGlobal:   newLimiter(60, time.Minute),
+		loginPerUser:  newLimiter(5, time.Minute),
+		passwordLimit: newLimiter(5, time.Minute),
 		// The test button makes an outbound request on the caller's behalf, and an
 		// endpoint that does that needs a ceiling.
 		nudgeNowLimit: newLimiter(6, time.Minute),
@@ -82,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/invites/{token}/accept", s.acceptInvite)
 	mux.Handle("POST /api/auth/logout", s.requireSession(s.logout))
 	mux.Handle("GET /api/auth/me", s.requireSession(s.me))
+	mux.Handle("POST /api/auth/password", s.requireSession(s.changePassword))
 
 	// An address the account can be recovered through. Under /api/auth because that is what
 	// it recovers, and because it is the same subject as everything else here.
