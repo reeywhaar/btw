@@ -14,6 +14,7 @@ import { Note } from "@app/components/Note";
 import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
 import { Select } from "@app/components/Select";
+import { Warning } from "@app/components/Warning";
 import { enable, installed, isIOS, pushState, type PushState } from "@app/push";
 
 export function Settings() {
@@ -79,21 +80,21 @@ function ThisBrowser() {
         // would be every mainstream browser of the last few years — which tells somebody
         // sitting in front of one that cannot do it exactly nothing.
         <Row>
-          <p className="text-sm text-muted">
+          <Warning>
             This browser has no Push API, so nudges cannot reach it and nothing
             will arrive here. Everything else still works — what you write down
             will be waiting in whatever you next open btw in.
-          </p>
+          </Warning>
         </Row>
       )}
 
       {state === "denied" && (
         <Row>
-          <p className="text-sm text-muted">
+          <Warning>
             Notifications are blocked for this site. A permission refused once
             cannot be asked for again — turn it back on in your browser&apos;s
             settings for this site, then reload.
-          </p>
+          </Warning>
         </Row>
       )}
 

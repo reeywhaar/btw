@@ -71,7 +71,8 @@ it — pushes `/` instead of reversing out of btw entirely.
 ## Components against islands
 
 `src/components/` holds the pieces with no opinion about what they are for: `Heading`,
-`Section`, `Row`, `Field`, `Note`, `Check`, `Button`, `Select`. `src/islands/` holds everything that knows what
+`Section`, `Row`, `Field`, `Note`, `Check`, `Button`, `Select`, `TextField`, `Warning`,
+`Dialog`, and the icons. `src/islands/` holds everything that knows what
 btw is — `Reminders`, `ThisBrowser`, `Devices`, `RhythmPanel`, `Login`.
 
 The test for the boundary is whether a piece would need rewriting for a different product.
@@ -253,6 +254,16 @@ says what those are.
 Light is the base on `:root`; dark is an override inside `@media (prefers-color-scheme: dark)`.
 The alternative was a `dark:` variant on every className in the application, half of which
 somebody eventually forgets.
+
+**A caution is not a refusal.** `--color-warn` is its own token — amber, `#b45309` on the
+light ground and `#f59e0b` on the dark, 4.8:1 and 9.2:1. The accent means *this was rejected*
+everywhere it appears, and spending it on "this browser cannot receive nudges" would make it
+mean less where it matters.
+
+`Warning` colours the mark and not the sentence. A whole paragraph set in warning colour
+shouts, and what is being said is usually mild; the icon is enough to catch an eye scanning
+the page. Icons are `1em` and `currentColor` and `aria-hidden` — sized to the text beside
+them, and silent, because the sentence already says it.
 
 **The accent flips with everything else.** The dark theme's coral is 2.6:1 on a light
 background — unreadable, and it is the colour used for refusals, which are the words that most

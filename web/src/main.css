@@ -21,6 +21,10 @@
    * refusals, which are the words that most need reading. So the accent flips with
    * everything else rather than being the one colour that does not. */
   --color-accent: #c2412d;
+  /* A caution is not a refusal. The accent means "this was rejected" everywhere else, and
+   * spending it on "this browser cannot receive nudges" would make it mean less where it
+   * matters. 4.81:1 on the light ground, 9.16:1 on the dark one. */
+  --color-warn: #b45309;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,6 +37,7 @@
     --color-line: #2a2a2e;
     --color-line-strong: #4a4a50;
     --color-accent: #f97362;
+    --color-warn: #f59e0b;
   }
 }
 
