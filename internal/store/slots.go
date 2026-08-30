@@ -115,3 +115,54 @@ func (s *Store) ExpireSlots(ctx context.Context, before time.Time) (int64, error
 	n, _ := res.RowsAffected()
 	return n, nil
 }
+
+// ReplanDay redraws the rest of a day under a rhythm that has just changed.
+//
+// Slots that already fired are left exactly as they are: they happened, and rewriting
+// history to match a setting changed afterwards would be a lie about a notification
+// somebody already saw. Everything still ahead is replaced.
+//
+// Only future instants are kept. A day re-planned at nine in the evening cannot hold a
+// morning, and inserting slots already in the past would either fire them all at once or be
+// swept as missed — both worse than an honest short evening.
+//
+// New rows are numbered above whatever survived, because idx is part of the key and reusing
+// one would collide with a slot that already fired.
+func (s *Store) ReplanDay(ctx context.Context, principalID, localDate string, at []time.Time, now time.Time) (int, error) {
+	tx, err := s.derived.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("replan day: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM slots WHERE principal_id = ? AND local_date = ? AND fired_at IS NULL`,
+		principalID, localDate); err != nil {
+		return 0, fmt.Errorf("replan day: %w", err)
+	}
+
+	var next int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT coalesce(max(idx) + 1, 0) FROM slots WHERE principal_id = ? AND local_date = ?`,
+		principalID, localDate).Scan(&next); err != nil {
+		return 0, fmt.Errorf("replan day: %w", err)
+	}
+
+	planned := 0
+	for _, t := range at {
+		if !t.After(now) {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO slots (principal_id, local_date, idx, at) VALUES (?, ?, ?, ?)`,
+			principalID, localDate, next, unix(t)); err != nil {
+			return 0, fmt.Errorf("replan day: %w", err)
+		}
+		next++
+		planned++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("replan day: %w", err)
+	}
+	return planned, nil
+}

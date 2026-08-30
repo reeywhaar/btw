@@ -662,3 +662,106 @@ func TestARowWithNoBrowserIdentityCollapsesNothing(t *testing.T) {
 		t.Fatalf("empty client ids collapsed to %d rows, want 2 left alone", len(got))
 	}
 }
+
+func TestReplanningKeepsWhatAlreadyFiredAndRedrawsTheRest(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	morning := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+	noon := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return noon })
+
+	// A day already half spent: one fired this morning, one still to come.
+	if err := s.PlanDay(ctx, p.ID, "2026-08-29", []time.Time{morning, noon.Add(4 * time.Hour)}); err != nil {
+		t.Fatalf("PlanDay(): %v", err)
+	}
+	due, _ := s.DueSlots(ctx, morning, time.Hour)
+	if len(due) != 1 {
+		t.Fatalf("DueSlots() = %d, want the morning slot", len(due))
+	}
+	if _, err := s.ClaimSlot(ctx, due[0], morning); err != nil {
+		t.Fatalf("ClaimSlot(): %v", err)
+	}
+
+	// Now the rhythm changes: four more this afternoon, and one instant already past.
+	planned, err := s.ReplanDay(ctx, p.ID, "2026-08-29", []time.Time{
+		morning.Add(time.Hour), // in the past — must not be scheduled
+		noon.Add(time.Hour),
+		noon.Add(2 * time.Hour),
+		noon.Add(3 * time.Hour),
+	}, noon)
+	if err != nil {
+		t.Fatalf("ReplanDay(): %v", err)
+	}
+	if planned != 3 {
+		t.Errorf("planned %d, want the 3 still ahead", planned)
+	}
+
+	// The morning one happened; rewriting it would be a lie about a notification somebody
+	// already saw.
+	var fired int
+	if err := s.derived.QueryRowContext(ctx,
+		`SELECT count(*) FROM slots WHERE principal_id = ? AND fired_at IS NOT NULL`, p.ID).Scan(&fired); err != nil {
+		t.Fatalf("count fired: %v", err)
+	}
+	if fired != 1 {
+		t.Errorf("%d fired slots survived, want 1", fired)
+	}
+	// The one that had not fired was replaced rather than added to.
+	var ahead int
+	if err := s.derived.QueryRowContext(ctx,
+		`SELECT count(*) FROM slots WHERE principal_id = ? AND fired_at IS NULL`, p.ID).Scan(&ahead); err != nil {
+		t.Fatalf("count ahead: %v", err)
+	}
+	if ahead != 3 {
+		t.Errorf("%d slots ahead, want 3", ahead)
+	}
+}
+
+func TestReplanningLateInTheDayYieldsAShortEvening(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	evening := time.Date(2026, 8, 29, 21, 30, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return evening })
+
+	// A whole day's worth of instants, nearly all of them already gone.
+	var day []time.Time
+	for h := 9; h < 22; h++ {
+		day = append(day, time.Date(2026, 8, 29, h, 0, 0, 0, time.UTC))
+	}
+	planned, err := s.ReplanDay(ctx, p.ID, "2026-08-29", day, evening)
+	if err != nil {
+		t.Fatalf("ReplanDay(): %v", err)
+	}
+	// Inserting the morning would either fire it all at once or be swept as missed. An
+	// honest short evening is the better answer.
+	if planned != 0 {
+		t.Errorf("planned %d slots at half past nine, want none in the past", planned)
+	}
+}
+
+func TestABudgetCanNowReachTwentyFour(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	r, _ := s.Rhythm(ctx, p.ID)
+	// The window and gap still bind first: nine to ten at forty-five minutes apart holds
+	// seventeen, not twenty-four.
+	if got := r.MaxBudgetForWindow(); got != 17 {
+		t.Errorf("MaxBudgetForWindow() in the default window = %d, want 17", got)
+	}
+
+	// Switched off, the day is the window and the ceiling is what binds.
+	r.WindowEnabled = false
+	if got := r.MaxBudgetForWindow(); got != MaxBudget {
+		t.Errorf("MaxBudgetForWindow() with no window = %d, want %d", got, MaxBudget)
+	}
+	r.Budget = 24
+	if err := s.SetRhythm(ctx, r); err != nil {
+		t.Errorf("SetRhythm(24) = %v, want it accepted", err)
+	}
+}

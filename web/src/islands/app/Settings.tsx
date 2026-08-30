@@ -374,6 +374,23 @@ function RhythmPanel() {
         )}
       </Field>
 
+      <Field
+        label="Arrive quietly"
+        control={
+          <Check
+            checked={r.silent}
+            onChange={(v) => save.mutate({ silent: v })}
+          />
+        }
+      >
+        {r.silent && (
+          <Note>
+            A nudge will show without a sound. It is still a notification — it
+            simply does not announce itself.
+          </Note>
+        )}
+      </Field>
+
       {r.timezone !== here && (
         <Field
           label={`Your hours are set in ${r.timezone}`}

@@ -149,6 +149,36 @@ func (s *Scheduler) plan(ctx context.Context, principalID string, now time.Time)
 	return nil
 }
 
+// Replan redraws the rest of today under a rhythm that has just changed.
+//
+// Without it, asking for twelve a day and receiving two is the correct behaviour of a plan
+// drawn yesterday under the old answer — which is indistinguishable, from the outside, from
+// the setting not working. A change somebody makes deliberately should take effect while
+// they are still looking at it.
+//
+// Slots that already fired stay: they happened. Only the rest of the day is redrawn, and a
+// change made late in the evening honestly yields a short evening.
+func (s *Scheduler) Replan(ctx context.Context, principalID string) error {
+	now := s.store.Now()
+
+	rh, err := s.store.Rhythm(ctx, principalID)
+	if err != nil {
+		return err
+	}
+	date := rhythm.LocalDate(rh, now)
+	at, err := rhythm.PlanDay(rh, date, principalID)
+	if err != nil {
+		return err
+	}
+	planned, err := s.store.ReplanDay(ctx, principalID, date, at, now)
+	if err != nil {
+		return err
+	}
+	s.log.Info("day replanned", "principal", principalID, "date", date,
+		"budget", rh.Budget, "remaining", planned)
+	return nil
+}
+
 // NudgeNow sends one immediately, for the button that proves the chain.
 //
 // The same path as a scheduled nudge — same selection, same encryption, same log — because
@@ -196,9 +226,15 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 		return Undelivered, 0, nil
 	}
 
-	payload, err := json.Marshal(map[string]string{
+	// The worker cannot read a rhythm, so whether this one is silent rides with it.
+	rh, err := s.store.Rhythm(ctx, principalID)
+	if err != nil {
+		return NothingToSend, 0, err
+	}
+	payload, err := json.Marshal(map[string]any{
 		"nudge_id": nudgeID,
 		"text":     chosen.Text,
+		"silent":   rh.Silent,
 	})
 	if err != nil {
 		return NothingToSend, 0, err

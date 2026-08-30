@@ -20,7 +20,7 @@ self.addEventListener("push", (event) => {
   }
 
   const body = data.text || "…";
-  event.waitUntil(showOne(body, data.nudge_id));
+  event.waitUntil(showOne(body, data.nudge_id, data.silent === true));
 });
 
 /**
@@ -38,7 +38,7 @@ self.addEventListener("push", (event) => {
  * platform that will not coalesce them, and that is a server-side fault — see
  * docs/push.md#one-browser-one-device.
  */
-async function showOne(body, nudgeID) {
+async function showOne(body, nudgeID, silent) {
   try {
     for (const existing of await self.registration.getNotifications({
       tag: "btw",
@@ -58,7 +58,11 @@ async function showOne(body, nudgeID) {
     // honours it, it replaces rather than stacks. renotify also makes deleting the tag
     // throw rather than silently regress, since the spec refuses one without the other.
     tag: "btw",
-    renotify: true,
+    // Silent and renotify contradict each other — one asks to re-alert and the other asks
+    // not to — so renotify is dropped when the person has asked for quiet. The tag still
+    // does its work either way.
+    renotify: !silent,
+    silent,
     data: { nudge_id: nudgeID },
     actions: [
       { action: "done", title: "Done" },

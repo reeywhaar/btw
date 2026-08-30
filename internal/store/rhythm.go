@@ -21,9 +21,13 @@ const (
 	DefaultMinGap   = 45
 )
 
-// MaxBudget is a ceiling on top of what the window can hold, so a slider cannot ask for a
+// MaxBudget is a ceiling on top of what the window can hold, so a control cannot ask for a
 // nudge every four minutes even in a very long waking day.
-const MaxBudget = 12
+//
+// The window and the gap still bind first, and usually well below this: nine to ten at
+// forty-five minutes apart holds seventeen. Twenty-four is reachable with the window
+// switched off, which is somebody asking to be nudged roughly once an hour, all day.
+const MaxBudget = 24
 
 // Rhythm is one person's answer to how often, and between which hours.
 type Rhythm struct {
@@ -42,6 +46,10 @@ type Rhythm struct {
 
 	Budget int
 	MinGap int
+
+	// Silent means the notification arrives without a sound. The reminder still shows; it
+	// simply does not announce itself.
+	Silent bool
 }
 
 // Bounds is the window a day is actually planned inside, in minutes since local midnight.
@@ -93,9 +101,10 @@ func (s *Store) Rhythm(ctx context.Context, principalID string) (Rhythm, error) 
 		MinGap:        DefaultMinGap,
 	}
 	err := s.main.QueryRowContext(ctx,
-		`SELECT timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap
+		`SELECT timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap, silent
 		   FROM rhythm WHERE principal_id = ?`,
-		principalID).Scan(&r.Timezone, &r.WindowEnabled, &r.WakeMinute, &r.SleepMinute, &r.Budget, &r.MinGap)
+		principalID).Scan(&r.Timezone, &r.WindowEnabled, &r.WakeMinute, &r.SleepMinute,
+		&r.Budget, &r.MinGap, &r.Silent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, nil
 	}
@@ -138,13 +147,14 @@ func (s *Store) SetRhythm(ctx context.Context, r Rhythm) error {
 	}
 
 	_, err := s.main.ExecContext(ctx,
-		`INSERT INTO rhythm (principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rhythm (principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap, silent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (principal_id) DO UPDATE SET
 		   timezone = excluded.timezone, window_enabled = excluded.window_enabled,
 		   wake_minute = excluded.wake_minute, sleep_minute = excluded.sleep_minute,
-		   budget = excluded.budget, min_gap = excluded.min_gap`,
-		r.PrincipalID, r.Timezone, r.WindowEnabled, r.WakeMinute, r.SleepMinute, r.Budget, r.MinGap)
+		   budget = excluded.budget, min_gap = excluded.min_gap, silent = excluded.silent`,
+		r.PrincipalID, r.Timezone, r.WindowEnabled, r.WakeMinute, r.SleepMinute, r.Budget,
+		r.MinGap, r.Silent)
 	if err != nil {
 		return fmt.Errorf("set rhythm: %w", err)
 	}

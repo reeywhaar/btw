@@ -29,13 +29,14 @@ const SessionCookie = "btw_auth"
 // maxBody caps a request body. Every JSON document this accepts is a few hundred bytes.
 const maxBody = 64 << 10
 
-// Nudger is what the API needs from the scheduler: the ability to send one now.
+// Scheduler is what the API needs from internal/nudge: send one now, and redraw a day whose
+// rhythm has just changed.
 //
 // An interface rather than the concrete type, so internal/api does not import the package
-// that imports it — and so a test can drive the "send me one" button without a push
-// service on the other end.
-type Nudger interface {
+// that imports it — and so a test can drive both without a push service on the other end.
+type Scheduler interface {
 	NudgeNow(ctx context.Context, principalID string) (outcome string, delivered int, err error)
+	Replan(ctx context.Context, principalID string) error
 }
 
 // Server holds what every handler needs.
@@ -44,7 +45,7 @@ type Server struct {
 	store  *store.Store
 	log    *slog.Logger
 	push   *webpush.Sender
-	nudger Nudger
+	nudger Scheduler
 	spa    *SPA
 
 	// Per-server rather than package-level. Two instances in one process — which is what
@@ -56,7 +57,7 @@ type Server struct {
 }
 
 // New builds the handler tree.
-func New(cfg *config.Config, st *store.Store, log *slog.Logger, push *webpush.Sender, nudger Nudger, spa *SPA) *Server {
+func New(cfg *config.Config, st *store.Store, log *slog.Logger, push *webpush.Sender, nudger Scheduler, spa *SPA) *Server {
 	return &Server{
 		cfg: cfg, store: st, log: log, push: push, nudger: nudger, spa: spa,
 		loginGlobal:   newLimiter(60, time.Minute),

@@ -30,6 +30,11 @@ A person's rhythm is a timezone, a waking window, how many nudges a day, and how
 fall. Defaults are `09:00`–`22:00`, three a day, forty-five minutes apart — guesses that want a
 fortnight of somebody carrying a phone before they are defaults rather than placeholders.
 
+The ceiling is twenty-four, and the window and gap bind first and usually well below it: nine
+to ten at forty-five minutes apart holds seventeen. Twenty-four needs the window switched off,
+which is asking to be nudged about once an hour, all day. A budget the effective window cannot
+hold is refused with a sentence naming the most it will take.
+
 The waking window is the only thing btw actually knows about somebody's day, so it is the only
 thing allowed to shape the draw.
 
@@ -76,6 +81,23 @@ than of what the runtime happens to contain.
 
 A zone that will not load falls back to UTC rather than refusing to plan. Wrong hours are
 visible and correctable; silence looks like the product not working.
+
+### A change takes effect today
+
+Changing the budget, the window or the timezone redraws the rest of the day immediately.
+
+It did not, on the theory that having the afternoon jump is a surprise. That was the wrong
+surprise to optimise for: asking for twelve a day and receiving two is a plan drawn yesterday
+behaving perfectly correctly, and from the outside it is indistinguishable from the setting
+being broken.
+
+Slots that already fired stay as they are — they happened, and rewriting them would be a lie
+about a notification somebody already saw. Only instants still ahead are replaced, and only
+future ones are written: a day redrawn at half past nine in the evening honestly yields a
+short evening rather than a morning that fires all at once or is swept as missed.
+
+The redraw is never fatal to the save. The rhythm is stored either way and tomorrow is planned
+from it, so a failure costs the rest of one day rather than the change.
 
 ### Planning is lazy
 
@@ -214,6 +236,16 @@ That third row is the promise. Every todo application in existence is built on t
 that an unanswered item is a debt, and the count that follows is the thing being avoided here.
 **Until a person ends it, the reminder keeps arriving** — not fading with age, not stopping
 after a run of nudges nobody answered, not expiring because a date went past.
+
+### Arriving quietly
+
+A rhythm can ask for notifications without a sound. The reminder still shows; it simply does
+not announce itself — which is what somebody working beside a phone wants, and the difference
+between a nudge and an interruption.
+
+It travels in the payload rather than being read at display time, because a service worker
+cannot read a rhythm. `renotify` is dropped when it is on: one asks to re-alert and the other
+asks for quiet, and asking for both is asking for nothing in particular.
 
 ### There is no snooze
 

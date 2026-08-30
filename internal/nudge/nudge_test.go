@@ -124,7 +124,7 @@ func newRig(t *testing.T) *rig {
 
 // decrypt is the browser's half: parse the aes128gcm header, run the key agreement from
 // the user agent's side, and open the record.
-func (r *rig) decrypt(body []byte) map[string]string {
+func (r *rig) decrypt(body []byte) map[string]any {
 	r.Helper()
 
 	salt := body[:16]
@@ -160,7 +160,7 @@ func (r *rig) decrypt(body []byte) map[string]string {
 		r.Fatalf("decrypt: %v", err)
 	}
 
-	var out map[string]string
+	var out map[string]any
 	if err := json.Unmarshal(bytes.TrimRight(record, "\x02"), &out); err != nil {
 		r.Fatalf("payload is not the JSON we sent: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestTheNudgeAnswersToItsOwnId(t *testing.T) {
 	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
 		t.Fatalf("NudgeNow(): %v", err)
 	}
-	id := r.decrypt(r.service.bodies[0])["nudge_id"]
+	id, _ := r.decrypt(r.service.bodies[0])["nudge_id"].(string)
 
 	// This is what the service worker does when somebody taps Drop.
 	got, err := r.store.ActOnNudge(t.Context(), r.principal.ID, id, store.ActionDrop)
@@ -365,4 +365,82 @@ func TestTheSchedulerStillWaitsOutTheFloor(t *testing.T) {
 	if r.service.count() != before {
 		t.Errorf("the scheduler sent %d more inside the reminder's own interval", r.service.count()-before)
 	}
+}
+
+func TestSilenceRidesWithTheNudge(t *testing.T) {
+	r := newRig(t)
+	r.store.CreateReminder(t.Context(), r.principal.ID, "water the plants")
+
+	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+		t.Fatalf("NudgeNow(): %v", err)
+	}
+	// A worker cannot read a rhythm, so the answer has to travel inside the payload.
+	if got := r.decrypt(r.service.bodies[0])["silent"]; got != false {
+		t.Errorf("silent = %v by default, want false", got)
+	}
+
+	rh, _ := r.store.Rhythm(t.Context(), r.principal.ID)
+	rh.Silent = true
+	if err := r.store.SetRhythm(t.Context(), rh); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+	if _, _, err := r.scheduler.NudgeNow(t.Context(), r.principal.ID); err != nil {
+		t.Fatalf("NudgeNow(): %v", err)
+	}
+	if got := r.decrypt(r.service.bodies[1])["silent"]; got != true {
+		t.Errorf("silent = %v after switching it on, want true", got)
+	}
+}
+
+func TestRaisingTheBudgetTakesEffectToday(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+
+	// Nine in the morning, a whole waking day ahead.
+	now := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+	r.store.SetClock(func() time.Time { return now })
+
+	// The day gets planned under the answer in force at the time.
+	r.scheduler.pass(ctx)
+	before := countAhead(t, r)
+
+	rh, err := r.store.Rhythm(ctx, r.principal.ID)
+	if err != nil {
+		t.Fatalf("Rhythm(): %v", err)
+	}
+	if before != rh.Budget {
+		t.Fatalf("planned %d slots for a budget of %d", before, rh.Budget)
+	}
+
+	// Somebody asks for more. Without a replan they would keep getting the old number all
+	// day, which is indistinguishable from the setting not working — and is exactly what
+	// "I set 12 and got 2" was.
+	rh.Budget = 12
+	if err := r.store.SetRhythm(ctx, rh); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+	if err := r.scheduler.Replan(ctx, r.principal.ID); err != nil {
+		t.Fatalf("Replan(): %v", err)
+	}
+
+	after := countAhead(t, r)
+	if after <= before {
+		t.Fatalf("still %d slots ahead after asking for 12, was %d", after, before)
+	}
+	// Planned from nine, so nearly the whole twelve are still to come.
+	if after < 10 {
+		t.Errorf("only %d slots ahead after raising the budget to 12", after)
+	}
+}
+
+// countAhead counts what is still due, through the same query the scheduler fires from —
+// so this measures what will actually happen rather than what a row says.
+func countAhead(t *testing.T, r *rig) int {
+	t.Helper()
+	// A window wide enough to catch the whole waking day, from just before it opens.
+	due, err := r.store.DueSlots(t.Context(), time.Date(2026, 8, 29, 23, 0, 0, 0, time.UTC), 24*time.Hour)
+	if err != nil {
+		t.Fatalf("DueSlots(): %v", err)
+	}
+	return len(due)
 }

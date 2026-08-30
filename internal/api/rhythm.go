@@ -17,6 +17,7 @@ func (s *Server) getRhythm(w http.ResponseWriter, r *http.Request) {
 		"sleep_minute":   rh.SleepMinute,
 		"budget":         rh.Budget,
 		"min_gap":        rh.MinGap,
+		"silent":         rh.Silent,
 		// What the window can hold, so the interface can bound its own control rather
 		// than offering a number the save will refuse.
 		"max_budget": rh.MaxBudgetForWindow(),
@@ -41,6 +42,7 @@ func (s *Server) patchRhythm(w http.ResponseWriter, r *http.Request) {
 		SleepMinute   *int    `json:"sleep_minute"`
 		Budget        *int    `json:"budget"`
 		MinGap        *int    `json:"min_gap"`
+		Silent        *bool   `json:"silent"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -64,12 +66,24 @@ func (s *Server) patchRhythm(w http.ResponseWriter, r *http.Request) {
 	if req.MinGap != nil {
 		next.MinGap = *req.MinGap
 	}
+	if req.Silent != nil {
+		next.Silent = *req.Silent
+	}
 	if err := s.store.SetRhythm(r.Context(), next); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	// Today's plan was drawn under the old rhythm and is not redrawn. Changing the window
-	// at noon and having the afternoon's nudges jump would be a surprise in the wrong
-	// direction; the new rhythm is what tomorrow is planned from.
+
+	// The rest of today is redrawn under the new answer.
+	//
+	// It did not used to be, on the theory that having the afternoon jump is a surprise. It
+	// is the smaller one: asking for twelve a day and getting two is the plan from
+	// yesterday behaving correctly, and is indistinguishable from the setting being broken.
+	//
+	// Never fatal. The rhythm is saved either way, and tomorrow is planned from it — a
+	// failure here costs the rest of one day, not the change.
+	if err := s.nudger.Replan(r.Context(), p.ID); err != nil {
+		s.log.Error("could not replan the day", "principal", p.ID, "err", err)
+	}
 	s.getRhythm(w, r)
 }
