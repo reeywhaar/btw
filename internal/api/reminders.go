@@ -9,8 +9,11 @@ import (
 
 func reminderJSON(r store.Reminder) map[string]any {
 	out := map[string]any{
-		"id":         r.ID,
-		"text":       r.Text,
+		"id":   r.ID,
+		"text": r.Text,
+		// What the sentence could not hold. Never sent in a push — a lock screen is the one
+		// place this deliberately does not appear.
+		"note":       r.Note,
 		"created_at": r.CreatedAt.Unix(),
 		"done_at":    nil,
 	}
@@ -57,6 +60,44 @@ func (s *Server) createReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, reminderJSON(rem))
+}
+
+func (s *Server) updateReminder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !ids.Valid(ids.Reminder, id) {
+		writeError(w, http.StatusBadRequest, "that is not a reminder")
+		return
+	}
+	p := principal(r)
+
+	current, err := s.store.Reminder(r.Context(), p.ID, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// Pointers, so absent leaves a field alone and empty clears it — which is how a
+	// description gets deleted without also having to retype the sentence.
+	var req struct {
+		Text *string `json:"text"`
+		Note *string `json:"note"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	text, note := current.Text, current.Note
+	if req.Text != nil {
+		text = *req.Text
+	}
+	if req.Note != nil {
+		note = *req.Note
+	}
+
+	updated, err := s.store.UpdateReminder(r.Context(), p.ID, id, text, note)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reminderJSON(updated))
 }
 
 // endReminder is what both buttons reach. Done and Drop end a reminder identically; which

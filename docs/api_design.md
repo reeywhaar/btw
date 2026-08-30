@@ -136,6 +136,7 @@ notifications, which it announces by existing.
 ```
 GET    /api/reminders[?done=true]        {reminders: [...]}
 POST   /api/reminders                    {text} → the reminder
+PATCH  /api/reminders/{id}               {text?, note?} → the reminder
 POST   /api/reminders/{id}/done          → 204
 POST   /api/reminders/{id}/revive        → 204
 DELETE /api/reminders/{id}               → 204
@@ -147,7 +148,12 @@ everything else has a default that is deliberately invisible.
 **Live and finished are two calls, not one call with a filter**, because they are two different
 screens and the finished list is the one nobody looks at.
 
-A reminder carries `id`, `text`, `created_at` and `done_at`. It deliberately does **not** carry
+`PATCH` takes pointers, so **absent leaves a field alone and empty clears it** — which is how
+a description is deleted without also retyping the sentence. It changes wording only: ending a
+reminder has its own route, and folding it in would make "fix this" and "I am finished with
+this" the same request.
+
+A reminder carries `id`, `text`, `note`, `created_at` and `done_at`. It deliberately does **not** carry
 `last_nudged_at`: that is how the selection works, not something a person is meant to reason
 about, and showing it invites exactly the arithmetic this product exists to avoid.
 

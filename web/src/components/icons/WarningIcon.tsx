@@ -12,7 +12,7 @@ export function WarningIcon({ className = "" }: { className?: string }) {
       height="1em"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.3"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       // Decorative: the sentence beside it says the same thing, and a screen reader that

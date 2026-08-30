@@ -3,6 +3,8 @@ import { request } from "@app/api/transport";
 export type Reminder = {
   id: string;
   text: string;
+  /** What the sentence could not hold. Never sent in a push. */
+  note: string;
   created_at: number;
   done_at: number | null;
 };
@@ -19,6 +21,16 @@ export const postReminders = (text: string) =>
 
 // Done and Drop end a reminder identically; which was pressed is recorded on the nudge that
 // was answered, when there was one. So there is one route here and not two.
+/**
+ * Changes what a reminder says. Absent leaves a field alone, empty clears it — which is how
+ * a description is deleted without also retyping the sentence.
+ */
+export const patchRemindersById = (
+  id: string,
+  changes: { text?: string; note?: string },
+) =>
+  request<Reminder>(`/api/reminders/${id}`, { method: "PATCH", body: changes });
+
 export const postRemindersByIdDone = (id: string) =>
   request<void>(`/api/reminders/${id}/done`, { method: "POST" });
 

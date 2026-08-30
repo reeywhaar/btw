@@ -724,3 +724,83 @@ func TestChangingAPasswordNeedsTheCurrentOne(t *testing.T) {
 		t.Error("the old password stopped working after a refused change")
 	}
 }
+
+func TestADescriptionIsEditedWithoutRetypingTheSentence(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	var made struct {
+		ID   string `json:"id"`
+		Note string `json:"note"`
+	}
+	decodeBody(t, h.do("POST", "/api/reminders", map[string]string{"text": "go to the circus"}), &made)
+	if made.Note != "" {
+		t.Errorf("a new reminder has a note: %q", made.Note)
+	}
+
+	// Absent leaves a field alone, so a description can be added without resending the
+	// sentence — and the sentence survives it.
+	var noted struct {
+		Text string `json:"text"`
+		Note string `json:"note"`
+	}
+	decodeBody(t, h.do("PATCH", "/api/reminders/"+made.ID, map[string]string{
+		"note": "the one on the common, tickets at the gate",
+	}), &noted)
+	if noted.Text != "go to the circus" {
+		t.Errorf("text = %q, want it untouched", noted.Text)
+	}
+	if noted.Note != "the one on the common, tickets at the gate" {
+		t.Errorf("note = %q", noted.Note)
+	}
+
+	// And empty clears it, which is how a description gets deleted.
+	var cleared struct {
+		Note string `json:"note"`
+	}
+	decodeBody(t, h.do("PATCH", "/api/reminders/"+made.ID, map[string]string{"note": ""}), &cleared)
+	if cleared.Note != "" {
+		t.Errorf("note = %q after clearing", cleared.Note)
+	}
+}
+
+func TestARemindersSentenceCannotBeEmptied(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	var made struct {
+		ID string `json:"id"`
+	}
+	decodeBody(t, h.do("POST", "/api/reminders", map[string]string{"text": "wash dishes"}), &made)
+
+	resp := h.do("PATCH", "/api/reminders/"+made.ID, map[string]string{"text": "   "})
+	defer resp.Body.Close()
+	// A reminder with nothing in it is a notification with nothing to say.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %s, want 400", resp.Status)
+	}
+}
+
+func TestSomebodyElsesReminderCannotBeEdited(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	other, err := h.store.CreatePrincipal(h.Context(), "someone", "a-good-password", store.RoleUser)
+	if err != nil {
+		t.Fatalf("CreatePrincipal(): %v", err)
+	}
+	theirs, err := h.store.CreateReminder(h.Context(), other.ID, "not yours")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	resp := h.do("PATCH", "/api/reminders/"+theirs.ID, map[string]string{"note": "mine now"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %s, want 404", resp.Status)
+	}
+	got, _ := h.store.Reminder(h.Context(), other.ID, theirs.ID)
+	if got.Note != "" {
+		t.Errorf("their reminder was written to: %q", got.Note)
+	}
+}

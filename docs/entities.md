@@ -90,7 +90,11 @@ point.** The log lives in the file that may be deleted; the floor must not. Dele
 `derived.db` and every reminder still knows when it was last raised, so nothing arrives twice
 in one morning because a disposable file was disposed of. A test asserts exactly this.
 
-`note`, `priority` and `min_interval` have no interface yet. They are here because a column
+`note` is the description: what the sentence could not hold, capped at 2,000 characters
+because it never leaves the app and a lock screen does not bound it. It is deliberately not in
+the push payload — a notification carries the sentence alone.
+
+`priority` and `min_interval` have no interface yet. They are here because a column
 added now is a line in the first migration and a column added later is a migration, a
 backfill and a release.
 

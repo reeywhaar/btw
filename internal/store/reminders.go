@@ -14,9 +14,15 @@ import (
 // DefaultMinInterval is the floor a reminder gets when nobody says otherwise: a day.
 const DefaultMinInterval = 24 * time.Hour
 
-// MaxReminderText is a sentence, not an essay. The whole thing has to be readable on a
-// lock screen, and a push payload has a hard ceiling of its own.
+// MaxReminderText is a sentence, not an essay. The whole thing has to be readable on a lock
+// screen, and a push payload has a hard ceiling of its own.
 const MaxReminderText = 500
+
+// MaxReminderNote is what the sentence could not hold: where the tickets are, which shop,
+// what you already tried. It never leaves the app, so a lock screen does not bound it — a
+// couple of paragraphs does, because anything longer is a document and belongs somewhere
+// that can be searched.
+const MaxReminderNote = 2000
 
 // Reminder is the standing thing somebody wrote down.
 type Reminder struct {
@@ -61,6 +67,34 @@ func (s *Store) CreateReminder(ctx context.Context, principalID, text string) (R
 		return Reminder{}, fmt.Errorf("create reminder: %w", err)
 	}
 	return r, nil
+}
+
+// UpdateReminder changes what a reminder says.
+//
+// Text and note only. Ending one is its own act with its own route, and folding it in here
+// would make "save this wording" and "I am done with this" the same request.
+func (s *Store) UpdateReminder(ctx context.Context, principalID, id, text, note string) (Reminder, error) {
+	text = strings.TrimSpace(text)
+	note = strings.TrimSpace(note)
+	switch {
+	case text == "":
+		return Reminder{}, Invalid("a reminder needs something written in it")
+	case len([]rune(text)) > MaxReminderText:
+		return Reminder{}, Invalid("that is too long for a notification; %d characters at most", MaxReminderText)
+	case len([]rune(note)) > MaxReminderNote:
+		return Reminder{}, Invalid("that description is too long; %d characters at most", MaxReminderNote)
+	}
+
+	res, err := s.main.ExecContext(ctx,
+		`UPDATE reminders SET text = ?, note = ? WHERE id = ? AND principal_id = ?`,
+		text, note, id, principalID)
+	if err != nil {
+		return Reminder{}, fmt.Errorf("update reminder: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Reminder{}, NotFound("no reminder %s", id)
+	}
+	return s.Reminder(ctx, principalID, id)
 }
 
 // Reminders lists one person's, newest first.

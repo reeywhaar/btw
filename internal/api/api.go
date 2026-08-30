@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /api/reminders", s.requireSession(s.listReminders))
 	mux.Handle("POST /api/reminders", s.requireSession(s.createReminder))
+	mux.Handle("PATCH /api/reminders/{id}", s.requireSession(s.updateReminder))
 	mux.Handle("POST /api/reminders/{id}/done", s.requireSession(s.endReminder))
 	mux.Handle("POST /api/reminders/{id}/revive", s.requireSession(s.reviveReminder))
 	mux.Handle("DELETE /api/reminders/{id}", s.requireSession(s.deleteReminder))

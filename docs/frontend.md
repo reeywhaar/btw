@@ -195,15 +195,19 @@ receive nothing itself.
 
 ## A row whose text can wrap
 
-The reminder list aligns its rows on the **baseline**, not the box.
+The sentence in a reminder row is itself a button, and it is the way into the editor — because
+it is the thing somebody is looking at. Its own button rather than a click on the row, so it
+does not swallow the marks beside it or nest one control inside another. A description, when
+there is one, shows underneath on a single truncated line.
 
-`items-start` was wrong: the text is 16px and the buttons beside it are 14px inside padding
-and a border, so aligning the boxes leaves the first line sitting above the labels next to it.
-`items-center` is wrong for a different reason — a reminder wraps, and centring two lines
-against the buttons pushes the first line above them and the second below.
+Aligning it went through two answers. Against *text* buttons the row aligned on the
+**baseline**: the sentence is 16px and a 14px label inside padding and a border does not line
+up by box, and centring fails because a wrapped reminder pushes its first line above the
+buttons and its second below — baseline uses the first line's, so any height starts level.
 
-Baseline uses the *first* line's baseline, so a reminder of any height starts level with Done
-and grows downward.
+Against **icon** buttons there is no text to align to, and baseline drifted. So the row aligns
+tops and the sentence carries a little padding of its own, which puts its first line level with
+the marks and still lets it wrap downward.
 
 ## A section with nothing to do in it is not shown
 
