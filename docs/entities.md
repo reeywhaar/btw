@@ -76,9 +76,19 @@ archived-at, no history to browse, and no recurring/one-shot distinction to conf
 one-off is one you end when you have done it, a standing one is one you never end.
 
 **`min_interval` is one number doing two jobs**, which is why it earns a column. It is a hard
-floor — a reminder inside its interval cannot be drawn at all — and it is the denominator
-that decides how fast the same reminder becomes interesting again. See
-[nudges.md](nudges.md#which-reminder-it-carries). Default a day. Zero means no floor.
+floor — a reminder inside its interval cannot be drawn at all — and it is the denominator that
+decides how fast the same reminder becomes interesting again. See
+[nudges.md](nudges.md#eligible).
+
+**Zero is the default, and means the reminder states no floor.** It defaulted to a day, which
+read as a sensible guess and behaved as an instruction: it capped the day's budget at however
+many reminders somebody had, and drifted later with every nudge so each morning began with a
+smaller pool than the evening before.
+
+A floor is a statement about one particular thing — *do not raise this more than weekly* — and
+inheriting one nobody made is a preference nobody expressed overruling an appetite somebody
+did. Where one is stated it is obeyed absolutely, including against a budget that would like
+more. Ordering falls back to a nominal day, which decides nothing about eligibility.
 
 **`priority` is `0..100`, default `50`.** Zero means never: the way to keep something written
 down without it ever arriving. That is a person silencing one reminder deliberately, which is
