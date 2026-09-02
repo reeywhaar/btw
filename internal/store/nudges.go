@@ -86,6 +86,17 @@ func (s *Store) LastNudgedReminder(ctx context.Context, principalID string) (str
 	return id, nil
 }
 
+// CountNudges is how many times one reminder has been raised. For tests and for anything
+// that later wants to show a history; nothing in the daemon calls it.
+func (s *Store) CountNudges(ctx context.Context, reminderID string) (int, error) {
+	var n int
+	if err := s.derived.QueryRowContext(ctx,
+		`SELECT count(*) FROM nudges WHERE reminder_id = ?`, reminderID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count nudges: %w", err)
+	}
+	return n, nil
+}
+
 // ActOnNudge records which button was pressed and returns the reminder it was about, so
 // the caller can end it.
 //

@@ -137,8 +137,24 @@ evening made with the morning's information.
 
 ### Eligible
 
-Not done, `priority > 0`, and `now - last_nudged_at >= min_interval`. That is a hard filter an
-index can serve, and it lives in SQL.
+Not done, `priority > 0`, and past whatever floor the reminder states. That is a hard filter
+an index can serve, and it lives in SQL.
+
+**A reminder states no floor by default.** It used to inherit one of a day, which read as a
+sensible guess and behaved as an instruction — and silently capped the day at however many
+reminders somebody had. Eight reminders at a day apiece cannot fill ten slots however the day
+is drawn, and each floor drifts later with every nudge, so the next morning starts with a
+smaller pool than the evening before: ten a day became eight, then five.
+
+A floor is a statement about one particular thing — *do not raise this more than weekly* — and
+inheriting one nobody made is a preference nobody expressed overruling an appetite somebody
+did. Where one is stated it is obeyed absolutely, including against a budget that would like
+more.
+
+Nothing is lost by dropping the default. The weighting collapses a reminder's chance to
+nothing the moment it is raised and recovers it over a nominal day; the gap between slots
+holds any two nudges apart; and the no-repeat rule stops the same one arriving twice running.
+Spacing was never the floor's job alone.
 
 And, when anything else is eligible, **not the reminder the last nudge carried**. A hard rule
 rather than a weighting, because a repeat is the one thing a person notices immediately and
@@ -166,6 +182,12 @@ to get.
 
 Never nudged counts as maximally stale, so a reminder just written down arrives soon — which
 is also the fastest way for somebody to find out the thing works at all.
+
+A reminder with no floor of its own is still ordered by how long it has waited, against a
+nominal day. That denominator decides nothing about eligibility — only how quickly one
+reminder overtakes another — and without it every unfloored reminder would weigh the same and
+the draw would be a coin toss between something raised a minute ago and something raised last
+week.
 
 Priority is a probability, not an order. One at 90 arrives more often than one at 10 and never
 silences it, which a sort would fail to give.

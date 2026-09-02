@@ -200,6 +200,7 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 	if err != nil {
 		return NothingToSend, 0, err
 	}
+
 	last, err := s.store.LastNudgedReminder(ctx, principalID)
 	if err != nil {
 		return NothingToSend, 0, err

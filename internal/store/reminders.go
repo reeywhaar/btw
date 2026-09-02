@@ -11,8 +11,17 @@ import (
 	"btw/internal/ids"
 )
 
-// DefaultMinInterval is the floor a reminder gets when nobody says otherwise: a day.
-const DefaultMinInterval = 24 * time.Hour
+// DefaultMinInterval is the floor a reminder gets when nobody says otherwise: none.
+//
+// It was a day, which read as a sensible guess and behaved as an instruction — capping the
+// day's budget at however many reminders somebody had. A floor is a statement about one
+// particular thing ("do not nag me about this more than weekly"), and inheriting one nobody
+// made is how a general appetite gets overruled by a preference nobody expressed.
+//
+// Zero does not mean "repeat freely". The weighting collapses a reminder's chance to nothing
+// the moment it is raised and recovers it over a nominal day, the gap between slots holds
+// any two nudges apart, and the no-repeat rule stops the same one arriving twice running.
+const DefaultMinInterval = 0
 
 // MaxReminderText is a sentence, not an essay. The whole thing has to be readable on a lock
 // screen, and a push payload has a hard ceiling of its own.
@@ -179,6 +188,26 @@ func (s *Store) DeleteReminder(ctx context.Context, principalID, id string) erro
 		`DELETE FROM reminders WHERE id = ? AND principal_id = ?`, id, principalID)
 	if err != nil {
 		return fmt.Errorf("delete reminder: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return NotFound("no reminder %s", id)
+	}
+	return nil
+}
+
+// SetMinInterval states how often a reminder may be raised at most.
+//
+// No interface reaches this yet. It exists because a floor is meant to be *stated* — the
+// default is none — and the behaviour of a stated one is worth being able to exercise.
+func (s *Store) SetMinInterval(ctx context.Context, principalID, id string, d time.Duration) error {
+	if d < 0 {
+		return Invalid("an interval cannot be negative")
+	}
+	res, err := s.main.ExecContext(ctx,
+		`UPDATE reminders SET min_interval = ? WHERE id = ? AND principal_id = ?`,
+		int64(d.Seconds()), id, principalID)
+	if err != nil {
+		return fmt.Errorf("set min interval: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return NotFound("no reminder %s", id)

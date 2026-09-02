@@ -132,6 +132,16 @@ func TestInviteIsSingleUse(t *testing.T) {
 	}
 }
 
+// withFloor states a floor on a reminder, which is now the only way one exists — reminders
+// no longer inherit a day's floor nobody asked for.
+func withFloor(t *testing.T, s *Store, id string, d time.Duration) {
+	t.Helper()
+	if _, err := s.main.Exec(`UPDATE reminders SET min_interval = ? WHERE id = ?`,
+		int64(d.Seconds()), id); err != nil {
+		t.Fatalf("set floor: %v", err)
+	}
+}
+
 func TestCandidatesRespectTheFloor(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -144,6 +154,7 @@ func TestCandidatesRespectTheFloor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
+	withFloor(t, s, r.ID, 24*time.Hour)
 
 	// Never nudged: eligible.
 	if got, _ := s.Candidates(ctx, p.ID, now, RespectFloor); len(got) != 1 {
@@ -158,7 +169,7 @@ func TestCandidatesRespectTheFloor(t *testing.T) {
 		t.Fatalf("Candidates() inside the floor = %d, want 0", len(got))
 	}
 	// A day later the floor has passed.
-	if got, _ := s.Candidates(ctx, p.ID, now.Add(DefaultMinInterval), RespectFloor); len(got) != 1 {
+	if got, _ := s.Candidates(ctx, p.ID, now.Add(24*time.Hour), RespectFloor); len(got) != 1 {
 		t.Fatalf("Candidates() past the floor = %d, want 1", len(got))
 	}
 }
@@ -191,6 +202,7 @@ func TestARemindersFloorSurvivesLosingTheLog(t *testing.T) {
 	p := testPrincipal(t, s)
 
 	r, _ := s.CreateReminder(ctx, p.ID, "water the plants")
+	withFloor(t, s, r.ID, 24*time.Hour)
 	if _, err := s.RecordNudge(ctx, NewNudgeID(), p.ID, r.ID); err != nil {
 		t.Fatalf("RecordNudge(): %v", err)
 	}
@@ -559,6 +571,7 @@ func TestTheFloorHoldsForTheSchedulerAndNotForAButton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
+	withFloor(t, s, r.ID, 24*time.Hour)
 	if _, err := s.RecordNudge(ctx, NewNudgeID(), p.ID, r.ID); err != nil {
 		t.Fatalf("RecordNudge(): %v", err)
 	}
@@ -763,5 +776,52 @@ func TestABudgetCanNowReachTwentyFour(t *testing.T) {
 	r.Budget = 24
 	if err := s.SetRhythm(ctx, r); err != nil {
 		t.Errorf("SetRhythm(24) = %v, want it accepted", err)
+	}
+}
+
+func TestAReminderInheritsNoFloor(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	r, err := s.CreateReminder(ctx, p.ID, "go to the circus")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	if r.MinInterval != 0 {
+		t.Errorf("a new reminder carries a floor of %s, want none", r.MinInterval)
+	}
+
+	// A day apiece was the old default, and it capped the day's budget at however many
+	// reminders somebody had — eight reminders could never fill ten slots.
+	if _, err := s.RecordNudge(ctx, NewNudgeID(), p.ID, r.ID); err != nil {
+		t.Fatalf("RecordNudge(): %v", err)
+	}
+	if got, _ := s.Candidates(ctx, p.ID, s.Now(), RespectFloor); len(got) != 1 {
+		t.Errorf("a just-nudged reminder with no floor is not drawable; the budget is capped again")
+	}
+}
+
+func TestAStatedFloorIsStillObeyed(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return now })
+
+	r, _ := s.CreateReminder(ctx, p.ID, "ring the dentist")
+	withFloor(t, s, r.ID, 7*24*time.Hour)
+	if _, err := s.RecordNudge(ctx, NewNudgeID(), p.ID, r.ID); err != nil {
+		t.Fatalf("RecordNudge(): %v", err)
+	}
+
+	// A floor somebody stated is an instruction about that particular thing, and outranks a
+	// general appetite for more nudges.
+	if got, _ := s.Candidates(ctx, p.ID, now.AddDate(0, 0, 3), RespectFloor); len(got) != 0 {
+		t.Error("a weekly reminder was offered three days later")
+	}
+	if got, _ := s.Candidates(ctx, p.ID, now.AddDate(0, 0, 8), RespectFloor); len(got) != 1 {
+		t.Error("a weekly reminder was not offered after eight days")
 	}
 }

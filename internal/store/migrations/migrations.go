@@ -74,6 +74,7 @@ var Main = []Migration{
 	mainMail,
 	mainDeviceClientID,
 	mainRhythmSilent,
+	mainReminderNoDefaultFloor,
 }
 
 // Derived owns what the running process accumulated: sessions, the day's slots, and the

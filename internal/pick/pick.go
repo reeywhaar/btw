@@ -27,6 +27,10 @@ import (
 // get.
 const StalenessCap = 4.0
 
+// nominalInterval is the denominator for a reminder that states no floor of its own. It
+// decides nothing about eligibility — only how quickly one reminder overtakes another.
+const nominalInterval = 24 * time.Hour
+
 // Pick returns the reminder to send, or false when there is nothing to send.
 //
 // `exclude` is the reminder the last nudge carried. It is refused outright while anything
@@ -114,13 +118,22 @@ func Weight(c store.Candidate, now time.Time) float64 {
 	if c.Priority <= 0 {
 		return 0
 	}
-	staleness := StalenessCap
-	if c.MinInterval > 0 && !c.LastNudgedAt.IsZero() {
-		staleness = min(now.Sub(c.LastNudgedAt).Seconds()/c.MinInterval.Seconds(), StalenessCap)
+	// Never nudged counts as maximally stale: a reminder just written down should arrive
+	// soon, which is also the fastest way for somebody to find out the thing works.
+	if c.LastNudgedAt.IsZero() {
+		return float64(c.Priority) * StalenessCap
 	}
-	// Never nudged, or no floor at all, counts as maximally stale: a reminder just written
-	// down should arrive soon, which is also the fastest way for somebody to find out the
-	// thing works.
+
+	// A reminder with no floor of its own is still ordered by how long it has waited — the
+	// nominal day decides only how fast one overtakes another, never whether it may be
+	// drawn. Without it every unfloored reminder would weigh the same and the draw would be
+	// a coin toss between something raised a minute ago and something raised last week.
+	denominator := c.MinInterval
+	if denominator <= 0 {
+		denominator = nominalInterval
+	}
+
+	staleness := min(now.Sub(c.LastNudgedAt).Seconds()/denominator.Seconds(), StalenessCap)
 	if staleness < 0 {
 		staleness = 0
 	}

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -443,4 +444,101 @@ func countAhead(t *testing.T, r *rig) int {
 		t.Fatalf("DueSlots(): %v", err)
 	}
 	return len(due)
+}
+
+// walkDay runs the scheduler minute by minute through one local day and reports how many
+// nudges actually went out.
+func walkDay(t *testing.T, r *rig, day time.Time) int {
+	t.Helper()
+	before := r.service.count()
+	now := day
+	r.store.SetClock(func() time.Time { return now })
+	for range 24 * 60 {
+		r.scheduler.pass(t.Context())
+		now = now.Add(time.Minute)
+	}
+	return r.service.count() - before
+}
+
+func TestADayFillsWhenThereAreFewerRemindersThanNudges(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+
+	// The shape that was reported: ten a day asked for, eight things written down.
+	rh, err := r.store.Rhythm(ctx, r.principal.ID)
+	if err != nil {
+		t.Fatalf("Rhythm(): %v", err)
+	}
+	rh.Budget = 10
+	if err := r.store.SetRhythm(ctx, rh); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+	for _, text := range []string{
+		"Watch sci fi", "Buy kitchen island", "Mop the floor", "Do the exercise",
+		"Buy a floor mat", "Fix the toilet", "Create a tracker", "Migrate the blog",
+	} {
+		if _, err := r.store.CreateReminder(ctx, r.principal.ID, text); err != nil {
+			t.Fatalf("CreateReminder(): %v", err)
+		}
+	}
+
+	got := walkDay(t, r, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	// Eight reminders each holding a day's floor could only ever supply eight, and the
+	// floors drift later with every nudge, so the day after supplied fewer still.
+	if got != rh.Budget {
+		t.Fatalf("%d nudges went out, want the %d that were asked for", got, rh.Budget)
+	}
+}
+
+func TestTheDayKeepsFillingOverAWeek(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+
+	rh, _ := r.store.Rhythm(ctx, r.principal.ID)
+	rh.Budget = 10
+	if err := r.store.SetRhythm(ctx, rh); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+	for i := range 8 {
+		if _, err := r.store.CreateReminder(ctx, r.principal.ID, fmt.Sprintf("reminder %d", i)); err != nil {
+			t.Fatalf("CreateReminder(): %v", err)
+		}
+	}
+
+	// The old failure was not a bad first day but a decaying one: each floor drifted later
+	// than the last, so every morning started with a smaller pool than the evening before.
+	for d := range 7 {
+		day := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC).AddDate(0, 0, d)
+		if got := walkDay(t, r, day); got != rh.Budget {
+			t.Errorf("day %d sent %d, want %d", d+1, got, rh.Budget)
+		}
+	}
+}
+
+func TestAStatedFloorStillHoldsAcrossAWholeDay(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+
+	rh, _ := r.store.Rhythm(ctx, r.principal.ID)
+	rh.Budget = 10
+	r.store.SetRhythm(ctx, rh)
+
+	// One reminder that asked not to be raised more than weekly, and one that said nothing.
+	weekly, _ := r.store.CreateReminder(ctx, r.principal.ID, "ring the dentist")
+	if err := r.store.SetMinInterval(ctx, r.principal.ID, weekly.ID, 7*24*time.Hour); err != nil {
+		t.Fatalf("SetMinInterval(): %v", err)
+	}
+	r.store.CreateReminder(ctx, r.principal.ID, "water the plants")
+
+	walkDay(t, r, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+
+	// A floor somebody stated is an instruction about that thing, and outranks a general
+	// appetite for more nudges — so the weekly one appears once and not ten times.
+	raised, err := r.store.CountNudges(ctx, weekly.ID)
+	if err != nil {
+		t.Fatalf("CountNudges(): %v", err)
+	}
+	if raised > 1 {
+		t.Errorf("the weekly reminder was raised %d times in one day", raised)
+	}
 }
