@@ -80,7 +80,16 @@ func (r Rhythm) MaxBudgetForWindow() int {
 		return MaxBudget
 	}
 	start, end := r.Bounds()
-	n := (end - start) / r.MinGap
+
+	// N nudges need N-1 gaps between them, not N. Dividing the window by the gap counts
+	// gaps and then reports that as a number of nudges, which is one short — thirteen
+	// waking hours at forty-five minutes apart were offered as seventeen when eighteen fit
+	// with a quarter of an hour to spare.
+	//
+	// The minus one on the window is the strict inequality the planner enforces: a slot has
+	// to land *before* the window closes, so a window of exactly one gap holds one nudge
+	// rather than two.
+	n := (end-start-1)/r.MinGap + 1
 	return min(max(n, 1), MaxBudget)
 }
 

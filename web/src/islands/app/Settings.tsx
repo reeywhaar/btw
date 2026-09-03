@@ -325,18 +325,26 @@ function RhythmPanel() {
             value={r.budget}
             onChange={(e) => save.mutate({ budget: Number(e.target.value) })}
           >
-            {/* Able to render the value it already holds. Switching the window back on can
-                leave a budget above what that window takes; the save is refused with a
-                sentence, and a select whose value is missing from its options would go
-                blank before anybody read the sentence. */}
+            {/* One to whatever fits, not zero to one less.
+                
+                Zero was offered as "none", which is a way of switching nudges off hidden
+                inside a count — and the count itself was short by one, because it divided
+                the window by the gap and that counts gaps rather than nudges.
+
+                The range still stretches to hold a stored value outside it, so a budget set
+                before a window narrowed still renders instead of leaving the control
+                blank. */}
             {Array.from(
-              { length: Math.max(r.max_budget, r.budget) + 1 },
-              (_, n) => (
-                <option key={n} value={n}>
-                  {n === 0 ? "none" : n === 1 ? "1 nudge" : `${n} nudges`}
-                </option>
-              ),
-            )}
+              {
+                length:
+                  Math.max(r.max_budget, r.budget) - Math.min(1, r.budget) + 1,
+              },
+              (_, i) => Math.min(1, r.budget) + i,
+            ).map((n) => (
+              <option key={n} value={n}>
+                {n === 0 ? "none" : n === 1 ? "1 nudge" : `${n} nudges`}
+              </option>
+            ))}
           </Select>
         }
       />

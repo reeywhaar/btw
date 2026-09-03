@@ -170,3 +170,56 @@ func TestSwitchingTheWindowOffDoesNotForgetTheHours(t *testing.T) {
 		t.Errorf("Bounds() = %d..%d, want the hours back", from, to)
 	}
 }
+
+// TestTheCeilingIsWhatThePlannerCanActuallyFit is the promise the interface makes.
+//
+// The control offers up to MaxBudgetForWindow, so a number it offers that the planner then
+// declines to draw is the interface lying — quietly, once a day, in a way nobody would
+// connect to a slider they set weeks ago.
+func TestTheCeilingIsWhatThePlannerCanActuallyFit(t *testing.T) {
+	for _, wake := range []int{0, 9 * 60, 22 * 60} {
+		for _, sleep := range []int{wake + 45, wake + 90, wake + 240, wake + 780, 24 * 60} {
+			if sleep <= wake || sleep > 24*60 {
+				continue
+			}
+			for _, gap := range []int{15, 30, 45, 90} {
+				r := store.Rhythm{
+					PrincipalID: "p_probe", Timezone: "UTC", WindowEnabled: true,
+					WakeMinute: wake, SleepMinute: sleep, MinGap: gap,
+				}
+				r.Budget = r.MaxBudgetForWindow()
+
+				for d := 1; d <= 40; d++ {
+					date := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, d).Format(time.DateOnly)
+					at, err := PlanDay(r, date, r.PrincipalID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(at) != r.Budget {
+						t.Fatalf("window %d..%d gap %d: the ceiling says %d and the planner drew %d",
+							wake, sleep, gap, r.Budget, len(at))
+					}
+					for i := 1; i < len(at); i++ {
+						if got := at[i].Sub(at[i-1]); got < time.Duration(gap)*time.Minute {
+							t.Fatalf("window %d..%d gap %d: slots %d and %d only %s apart",
+								wake, sleep, gap, i-1, i, got)
+						}
+					}
+					if last := at[len(at)-1]; !last.Before(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, d).Add(time.Duration(sleep) * time.Minute)) {
+						t.Fatalf("window %d..%d gap %d: a slot landed at or after the window closed", wake, sleep, gap)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestEighteenFitInThirteenWakingHours(t *testing.T) {
+	r := defaults()
+	// Eighteen nudges need seventeen gaps between them, not eighteen. Seventeen times
+	// forty-five is 765 minutes, which is inside a 780-minute window with a quarter of an
+	// hour to spare — so dividing the window by the gap was always one short.
+	if got := r.MaxBudgetForWindow(); got != 18 {
+		t.Fatalf("MaxBudgetForWindow() = %d, want 18", got)
+	}
+}

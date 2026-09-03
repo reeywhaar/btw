@@ -31,9 +31,17 @@ fall. Defaults are `09:00`–`22:00`, three a day, forty-five minutes apart — 
 fortnight of somebody carrying a phone before they are defaults rather than placeholders.
 
 The ceiling is twenty-four, and the window and gap bind first and usually well below it: nine
-to ten at forty-five minutes apart holds seventeen. Twenty-four needs the window switched off,
+to ten at forty-five minutes apart holds eighteen. Twenty-four needs the window switched off,
 which is asking to be nudged about once an hour, all day. A budget the effective window cannot
 hold is refused with a sentence naming the most it will take.
+
+**N nudges need N−1 gaps.** The ceiling divided the window by the gap, which counts gaps and
+reports the answer as a number of nudges — one short, every time. Seventeen gaps of
+forty-five minutes is 765 of a 780-minute window, so eighteen fit with a quarter of an hour
+spare.
+
+Nought is not on the control either. It was offered as "none", which is a way of switching
+nudges off hidden inside a count of them.
 
 The waking window is the only thing btw actually knows about somebody's day, so it is the only
 thing allowed to shape the draw.
@@ -59,6 +67,13 @@ Two adjacent blocks can still place their instants either side of a boundary, so
 close to its predecessor is pushed forward. That biases a few slots slightly later, and it is
 worth stating rather than hiding — the alternative is resampling, and a loop that can fail to
 terminate does not belong in a scheduler.
+
+Each slot also **reserves room for the ones after it**: it may not be drawn so late that the
+remainder have nowhere left to go. Without that reservation a day pushed gradually later ran
+out of window and dropped its last few, so asking for the most that fits quietly delivered
+fewer — and the ceiling had to be set below what actually packs to hide it. A property test
+holds the two together: at every window and gap, the number the interface offers is the number
+the planner draws, every gap holds, and nothing lands after the window closes.
 
 The seed is the person and the local date. A day's plan is reproducible, so *why did it go off
 at 04:12* is a question answerable without having been watching.

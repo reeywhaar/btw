@@ -763,9 +763,10 @@ func TestABudgetCanNowReachTwentyFour(t *testing.T) {
 
 	r, _ := s.Rhythm(ctx, p.ID)
 	// The window and gap still bind first: nine to ten at forty-five minutes apart holds
-	// seventeen, not twenty-four.
-	if got := r.MaxBudgetForWindow(); got != 17 {
-		t.Errorf("MaxBudgetForWindow() in the default window = %d, want 17", got)
+	// eighteen, not twenty-four. Eighteen and not seventeen because eighteen nudges need
+	// seventeen gaps between them — 17 × 45 is 765 minutes inside a 780-minute window.
+	if got := r.MaxBudgetForWindow(); got != 18 {
+		t.Errorf("MaxBudgetForWindow() in the default window = %d, want 18", got)
 	}
 
 	// Switched off, the day is the window and the ceiling is what binds.

@@ -103,20 +103,33 @@ func PlanDay(r store.Rhythm, date string, seed string) ([]time.Time, error) {
 	out := make([]time.Time, 0, r.Budget)
 	var last time.Time
 	for i := range r.Budget {
-		blockStart := start.Add(block * time.Duration(i))
-		at := blockStart.Add(time.Duration(rng.Int64N(int64(block))))
+		// Each slot is drawn inside its own block, which is what keeps them spread and
+		// unpredictable without a rejection loop that might not terminate.
+		lo := start.Add(block * time.Duration(i))
+		hi := lo.Add(block)
 
-		// Two adjacent blocks can place their instants at the end of one and the start of
-		// the next. Pushing the later one forward biases a few slots slightly later, which
-		// is worth stating rather than hiding — the alternative is resampling, and a loop
-		// that can fail to terminate does not belong in a scheduler.
-		if !last.IsZero() && at.Sub(last) < gap {
-			at = last.Add(gap)
+		// Two bounds the block does not know about.
+		//
+		// It cannot start before the previous slot plus the gap — two adjacent blocks can
+		// otherwise place their instants either side of a boundary.
+		if !last.IsZero() && last.Add(gap).After(lo) {
+			lo = last.Add(gap)
 		}
-		if !at.Before(end) {
-			// The window ran out. A short day is the honest outcome; padding it would put
-			// two nudges on top of each other at bedtime.
-			break
+		// And it cannot start so late that the slots after it have nowhere to go. Reserving
+		// their room here is what makes the ceiling honest: without it a day pushed
+		// gradually later ran out of room and dropped its last few, so asking for the most
+		// that fits quietly delivered fewer.
+		latest := end.Add(-time.Duration(r.Budget-1-i)*gap - time.Minute)
+		if lo.After(latest) {
+			lo = latest
+		}
+		if hi.After(latest) {
+			hi = latest
+		}
+
+		at := lo
+		if hi.After(lo) {
+			at = lo.Add(time.Duration(rng.Int64N(int64(hi.Sub(lo)))))
 		}
 		out = append(out, at.UTC())
 		last = at
