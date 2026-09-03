@@ -22,8 +22,13 @@ anyway, because the whole cost of losing them is that everybody signs in again.
 
 Holding that seam is what keeps `main.db` small and quiet. It is written when somebody types
 something and at almost no other time, which is what a file you take snapshots of should look
-like — while the tables that move constantly, the day's plan and the nudge log, churn in the
-file nobody has to keep.
+like — while the tables that move constantly, the nudge waiting to go out and the nudge log,
+churn in the file nobody has to keep.
+
+The split is also the backup policy: `main.db` decides when a copy goes out, and `derived.db`
+only rides along. `backup_state` lives here for that reason — the question is whether `main.db`
+changed, and recording the answer in `main.db` would change the thing being asked about. See
+[deploy](deploy.md#backups).
 
 ---
 
