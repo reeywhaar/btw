@@ -196,6 +196,47 @@ jobs:
 
           docker rm -f push-smoke >/dev/null
 
+      # Backups leave through an outgoing POST, so what the image can be asked here is
+      # whether the switch works: silent with no agent named, running when one is. What goes
+      # in an archive and what makes one happen are covered by internal/backup's tests.
+      - name: Smoke-test the backup switch
+        run: |
+          docker run -d --name backup-off \
+            -e BTW_PUBLIC_URL=http://localhost:8082 \
+            -p 8082:80 ghcr.io/${{ github.repository }}:latest
+
+          for _ in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8082/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker logs backup-off 2>&1 | grep -q "backups off"
+          docker rm -f backup-off >/dev/null
+
+          docker run -d --name backup-on \
+            -e BTW_PUBLIC_URL=http://localhost:8083 \
+            -e BTW_BACKUP_URL=http://backup:8080/backup \
+            -e BTW_BACKUP_MODE=all \
+            -p 8083:80 ghcr.io/${{ github.repository }}:latest
+
+          for _ in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8083/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker logs backup-on 2>&1 | grep -q "backing up"
+
+          # A named agent that is not there must not stop btw serving.
+          curl -fsS http://127.0.0.1:8083/healthz | grep -q '"ok":true'
+          docker rm -f backup-on >/dev/null
+
+          # A policy for archives with nowhere to send them is refused at startup rather
+          # than ignored — the failure it hides is a missing backup.
+          if docker run --rm \
+            -e BTW_PUBLIC_URL=http://localhost:8084 \
+            -e BTW_BACKUP_MODE=all ghcr.io/${{ github.repository }}:latest serve; then
+            echo "BTW_BACKUP_MODE was accepted with no BTW_BACKUP_URL"
+            exit 1
+          fi
+
   # A job of its own rather than steps on `publish`, because a failing `test` *skips*
   # `publish` rather than failing it, and a step in a job that never starts cannot report
   # that it never started. This one runs either way and reads the results off `needs`.

@@ -42,7 +42,13 @@ address silently kills every device already registered, and they have to be adde
 
 Mount `/data`. `main.db` is the file worth backing up — accounts, reminders, devices, and the
 VAPID keypair, which cannot be regenerated without invalidating every subscription at once.
-`derived.db` is sessions, the day's plan and the nudge log, and is designed to be deletable.
+`derived.db` is sessions, the nudge waiting to go out and the nudge log, and is designed to be
+deletable.
+
+Set `BTW_BACKUP_URL` to a backup agent and btw posts a gzipped tar of consistent copies there
+whenever `main.db` has changed — nothing goes out while nothing has been written. Leave it
+unset and it takes none. btw holds no credential and knows nothing about where its backups end
+up, which is the point — see [deploy.md](docs/deploy.md#backups).
 
 ## Turning on notifications
 

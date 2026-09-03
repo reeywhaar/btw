@@ -17,6 +17,7 @@ internal/
   pick/              what the nudge carries — pure
   webpush/           VAPID, RFC 8291 encryption, one POST
   nudge/             the scheduler: the impure half
+  backup/            snapshots the databases and posts them to a backup agent
   api/               HTTP handlers, middleware, SPA serving
 web/
   dist/              the built bundle; read from disk at startup, not compiled in
@@ -56,11 +57,16 @@ The version is a variable rather than a constant for one reason:
 
 ```
 cli → api → nudge → pick, rhythm, webpush → store
-        ↘                                     ↗
-         ─────────────── store ──────────────
+  ↓     ↘                                     ↗
+  ↓      ─────────────── store ──────────────
+  └→ backup ──────────────────────────────────↗
 config is read by cli and passed down; nothing imports it upward.
-app imports nothing and is imported freely — that is what a package of four facts is for.
+app imports nothing and is imported freely — that is what a package of three facts is for.
 ```
+
+`internal/backup` hangs off `cli` rather than `api` because nothing about it is a request:
+it wakes on a timer, snapshots the databases and posts them outward. It is the only package
+that makes an outgoing request other than `webpush`.
 
 `internal/api` does **not** import `internal/nudge`. It declares a one-method `Nudger`
 interface and takes it, which is what keeps the direction clean and what lets a test drive the

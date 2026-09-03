@@ -14,6 +14,7 @@ import (
 
 	"btw/internal/api"
 	"btw/internal/app"
+	"btw/internal/backup"
 	"btw/internal/config"
 	"btw/internal/nudge"
 	"btw/internal/store"
@@ -70,6 +71,7 @@ func serve(ctx context.Context) error {
 	}
 
 	scheduler := nudge.New(st, sender, log)
+
 	srv := &http.Server{
 		Addr:              app.ListenAddr,
 		Handler:           api.New(cfg, st, log, sender, scheduler, spa).Handler(),
@@ -80,6 +82,18 @@ func serve(ctx context.Context) error {
 	defer stop()
 
 	go scheduler.Run(ctx)
+
+	// Run bails on its own when no agent was named, but saying so once at startup is worth
+	// more than a silence an operator has to interpret.
+	if cfg.BackupURL == "" {
+		log.Info("backups off", "hint", config.BackupURLEnv+" names an agent to post archives to")
+	}
+	go (&backup.Pusher{
+		Store: st,
+		Log:   log,
+		URL:   cfg.BackupURL,
+		Mode:  cfg.BackupMode,
+	}).Run(ctx)
 
 	errs := make(chan error, 1)
 	go func() {

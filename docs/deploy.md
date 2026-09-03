@@ -14,8 +14,10 @@ ghcr.io/reeywhaar/btw:latest
 | `BTW_DATA_DIR` | `/data` | Where `main.db` and `derived.db` live |
 | `BTW_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `BTW_WEB_DIR` | `/srv/web` | The built bundle. Set in the image, rarely anywhere else |
+| `BTW_BACKUP_URL` | — | A backup agent to post archives to. Unset, btw takes none |
+| `BTW_BACKUP_MODE` | `relaxed` | `main`, `relaxed`, `all` — see [Backups](#backups) |
 
-There is no config file. Three variables do not need one.
+There is no config file. A handful of variables do not need one.
 
 ### `BTW_PUBLIC_URL` does more work here than it looks
 
@@ -57,6 +59,8 @@ that needs a real certificate.
 `:80`, inside the container, not configurable. Remap it with `-p`. A port number inside a
 container is not a thing an operator should have to think about twice.
 
+There is no second port. Backups leave through an outgoing request — see below.
+
 ## Volume
 
 `/data`, holding both SQLite databases and their WAL sidecars.
@@ -78,12 +82,113 @@ in is the first-run invitation link printed to a log that is also gone.
 the asymmetry is worth caring about: losing it invalidates every subscription on the instance
 at once, and no amount of re-registering repairs it.
 
-`derived.db` is sessions, the day's plan and the nudge log, and is designed to be deletable.
-Losing it signs everybody out and forgets what was sent; every reminder still knows when it was
-last raised, because that lives in `main.db`. A test asserts exactly that.
+`derived.db` is sessions, the nudge waiting to go out and the nudge log, and is designed to be
+deletable. Losing it signs everybody out and forgets what was sent; every reminder still knows
+when it was last raised, because that lives in `main.db`. A test asserts exactly that.
 
-Back it up with `sqlite3 main.db ".backup out.db"` or a filesystem snapshot, **not `cp`** — a
-plain copy of a WAL database while it is being written is a copy of an inconsistent moment.
+Back it up with `sqlite3 main.db ".backup out.db"`, a filesystem snapshot, or the endpoint
+below — **not `cp`**. A plain copy of a WAL database while it is being written is a copy of an
+inconsistent moment.
+
+## Backups
+
+Set `BTW_BACKUP_URL` to a backup agent and btw sends it a gzipped tar of its databases when
+there is something new to send. Leave it unset and btw takes no backups at all.
+
+```
+btw ──POST archive──▶ agent ──▶ wherever the agent was told
+     (no credential)   (holds the token, names the file, prunes old ones)
+```
+
+Each copy is made with `VACUUM INTO`, so what leaves is a consistent database that opens on
+its own — the reason btw builds the archive rather than something running `tar` over the
+volume. A WAL database is three files with the committed state spread across them, and a
+file-level copy of a running instance is a copy of a moment that never existed.
+
+### When one goes out
+
+**When `main.db` has changed, and not otherwise.** btw looks every five minutes, hashes a
+fresh snapshot of `main.db`, and sends only if it differs from the copy the agent last
+accepted. An instance nobody has touched since Tuesday sends nothing, and a week of that costs
+one upload, not two thousand.
+
+Deciding this inside btw is the whole reason the archive is pushed rather than served. A
+container fetching on a loop from outside cannot know whether anything has been written; it
+can only ask on a timer and take whatever it gets.
+
+The five minutes are also a throttle. Writing down six things in one minute is one archive
+holding all six, five minutes later, rather than six archives — nothing here reacts to a
+write, so there is no burst it can be made to keep up with. The first pass is immediate,
+because a process that has just started may be on a volume nobody has a copy of yet.
+
+Neither number is a setting. What an operator chooses is the promise they want, and that is
+the mode.
+
+### Modes
+
+| `BTW_BACKUP_MODE` | Carries | Sends when |
+| --- | --- | --- |
+| `main` | `main.db` | `main.db` changed |
+| `relaxed` *(default)* | both | `main.db` changed |
+| `all` | both | `main.db` changed, **or** half an hour has passed |
+
+`main.db` is what somebody typed — accounts, reminders, devices, rhythms — plus the VAPID
+keypair, whose loss invalidates every push subscription on the instance at once and cannot be
+repaired by anybody re-registering. It is the file that has to survive.
+
+`derived.db` is sessions, the nudge waiting to go out, and the nudge log. It rides along in
+`relaxed` and `all` but never decides that a copy is due, and that costs less than it sounds:
+sending a nudge writes to *both* — the reminder's `last_nudged_at` in `main.db`, the log row in
+`derived.db` — so the record of what went out travels with a change `main.db` has already
+noticed. What moves in `derived.db` alone is somebody signing in and the scheduler picking a
+moment, and losing those costs a sign-in and one rescheduled nudge.
+
+**`all` is the only mode that sends when nothing has changed**, and the reason to want it is
+upstream of the archive. An agent told how often to expect one can report a btw that has
+stopped backing up; with copies arriving only when somebody adds a reminder, it cannot tell a
+broken instance from a quiet one, and that alarm is useless on exactly the instances that are
+quiet for weeks. Pair it with the agent's own staleness check.
+
+### What btw does not know
+
+**btw holds no credential, no provider, no bucket and no retention policy.** It decides when to
+back up and what goes in the archive; everything after that belongs to the agent.
+
+That is the point of the arrangement rather than a gap in it. A btw container that is
+compromised cannot read, overwrite or delete a single existing backup, because it has nothing
+to authenticate with and nothing to point at. It can only hand over one more archive.
+
+```yaml
+services:
+  btw:
+    image: ghcr.io/reeywhaar/btw:latest
+    environment:
+      BTW_PUBLIC_URL: https://btw.example.com
+      BTW_BACKUP_URL: http://backup:8080/backup
+      BTW_BACKUP_MODE: all
+    volumes: [btw-data:/data]
+    ports: ["8080:80"]
+
+  backup:
+    # The agent: it holds the token and decides where archives end up.
+    image: ghcr.io/reeywhaar/backio-agent:latest
+    environment:
+      # With mode `all`, an hour of silence means something is wrong rather than quiet.
+      BACKUP_EXPECT_EVERY: 1h
+      # …destination and credential, which are the agent's business
+```
+
+### Restoring
+
+Stop the container, extract the archive into the data directory, start it again.
+
+The archive carries every password hash on the instance and the VAPID private key, so it is
+worth the same care as the volume itself — the agent's `BACKUP_PASSWORD` is worth setting if
+archives are going anywhere you do not own. Members are written mode `0600` and there are no
+directory entries, so extracting cannot re-`chmod` a data directory that already exists.
+
+Restoring `main.db` alone is a complete restore. Everybody signs in again, and the first nudge
+after it is scheduled afresh.
 
 ## First run
 

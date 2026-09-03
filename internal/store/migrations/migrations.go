@@ -85,4 +85,5 @@ var Derived = []Migration{
 	derivedInitialSchema,
 	derivedDropSlots,
 	derivedPendingNudge,
+	derivedBackupState,
 }
