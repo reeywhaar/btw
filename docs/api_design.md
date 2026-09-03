@@ -188,23 +188,25 @@ The verb is the last path segment and one handler serves both, so they cannot dr
 
 ```
 GET    /api/rhythm                       {timezone, window_enabled, wake_minute, sleep_minute,
-                                          budget, min_gap, max_budget}
+                                          budget, silent, max_budget}
 PATCH  /api/rhythm                       any of the above, all optional
 ```
 
 Fields are pointers in the request struct, so **absent and zero are different**: a budget of
 `0` is somebody switching nudges off, and a missing budget is a request about something else.
 
-`max_budget` is what the *effective* window can hold at that spacing — the whole day when
-`window_enabled` is false — so the interface can bound its own control rather than offering a
-number the save will refuse.
+`max_budget` is the most anybody may ask for, and is a plain number: the budget is an
+interval rather than a count — the waking window divided by it — so nothing about the window
+bounds it.
 
 **There is no `next_nudge_at`, and there never will be.** A person who can see that the next
 nudge is at 14:32 is a person waiting for 14:32, and the surprise is the mechanism. A test
 asserts this response leaks no scheduling detail.
 
-A change does not redraw today's plan. Moving the window at noon and having the afternoon jump
-would be a surprise in the wrong direction; the new rhythm is what tomorrow is planned from.
+A change drops any nudge already scheduled, because it was decided under the old answer — at
+an interval that has changed, or for a moment that may now be the middle of the night. The
+next tick works the whole thing out again, which is all a rhythm change has to do now that
+there is no plan to redraw.
 
 ### Devices
 

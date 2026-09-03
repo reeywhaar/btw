@@ -4,7 +4,7 @@
 //
 // main.db holds what a person typed: accounts, invitations, reminders, tags, rhythm,
 // devices, and the VAPID keypair. derived.db holds what the running process accumulated:
-// sessions, the day's slots, the nudge log.
+// sessions, the nudge waiting to go out, the nudge log.
 //
 // The name is a leftover and is not quite right: almost nothing in derived.db is derived
 // from anything. The admission test is simpler and stricter — can this file be deleted

@@ -26,123 +26,80 @@ direction it could honestly rise is in [what is still open](#still-open).
 
 ## When a nudge happens
 
-A person's rhythm is a timezone, a waking window, how many nudges a day, and how close two may
-fall. Defaults are `09:00`–`22:00`, three a day, forty-five minutes apart — guesses that want a
-fortnight of somebody carrying a phone before they are defaults rather than placeholders.
+A person's rhythm is a timezone, a waking window, and how many nudges a day. Defaults are
+`09:00`–`22:00` and three a day — guesses that want a fortnight of somebody carrying a phone
+before they are defaults rather than placeholders. The ceiling is twenty-four.
 
-The ceiling is twenty-four, and the window and gap bind first and usually well below it: nine
-to ten at forty-five minutes apart holds eighteen. Twenty-four needs the window switched off,
-which is asking to be nudged about once an hour, all day. A budget the effective window cannot
-hold is refused with a sentence naming the most it will take.
+**The budget is not a count, it is an interval.** Eighteen a day across a thirteen-hour
+waking window is one about every forty-three minutes; across a whole day it is one about
+every eighty. That is the only thing the number means, and the interval is floored at one
+tick because nothing can be delivered between two of them.
 
-**N nudges need N−1 gaps.** The ceiling divided the window by the gap, which counts gaps and
-reports the answer as a number of nudges — one short, every time. Seventeen gaps of
-forty-five minutes is 765 of a 780-minute window, so eighteen fit with a quarter of an hour
-spare.
+The exact number of nudges in a day is therefore **not a promise**. A day that delivers nine
+when the rhythm says ten behaved correctly, and nobody counts.
 
-Nought is not on the control either. It was offered as "none", which is a way of switching
-nudges off hidden inside a count of them.
+### Three states, and no plan
 
-The waking window is the only thing btw actually knows about somebody's day, so it is the only
-thing allowed to shape the draw.
+Every five minutes the loop asks, for each person with a device:
 
-**It is optional.** Switched off, the day is the window and a nudge can land at any hour. That
-is a real thing to want — shift work, or simply not minding — and it is not a state to fall
-into by accident, so the interface says out loud what unchecking the box means rather than
-leaving somebody to discover it at four in the morning.
+1. **A nudge is waiting and its moment has come.** Send it. Claiming it is the delete, so two
+   overlapping ticks cannot both send the same one.
+2. **A nudge is waiting and its moment has not.** Leave it alone. Deciding again while one
+   stands would move it, and a nudge that keeps being rescheduled never arrives.
+3. **Nothing is waiting.** Work out whether one is owed — awake, and longer than an interval
+   since the last — and if so schedule one a random moment inside the next tenth of an
+   interval.
 
-### Stratified, not rejection-sampled
+That last step is why deciding and firing are separate. The loop only wakes on a tick, so
+firing where the answer turns yes would put every nudge on a five-minute mark, which is a
+pattern anybody would eventually notice.
 
-The window is cut into `budget` equal blocks and one instant is drawn uniformly inside each.
+### What this replaced
 
-That terminates — always, on the first try — and gives both properties that matter:
-unpredictable inside its block, so nobody can wait for it; never three in an hour, because
-each block holds exactly one.
+A day's worth of instants, drawn in advance and stored. It existed to promise an exact number
+of nudges at times chosen a day ahead, and everything awkward nearby was in service of that
+promise: redrawing the day when a setting changed, a grace window for slots nobody fired, a
+ceiling that had to agree with what the planner could actually place, and an off-by-one in
+that agreement.
 
-Uniform sampling across the whole window with a minimum-gap constraint would give a slightly
-nicer distribution and can loop for a long time on a short window, which is a bad trade for a
-function that runs inside a scheduler tick.
+The promise was not worth its machinery, and the machinery kept being wrong in ways that
+looked like the product ignoring somebody. What matters is *roughly this often, at hours
+nobody picked, while awake* — which is answerable from the clock and the last nudge, with one
+timestamp of state.
 
-Two adjacent blocks can still place their instants either side of a boundary, so a slot too
-close to its predecessor is pushed forward. That biases a few slots slightly later, and it is
-worth stating rather than hiding — the alternative is resampling, and a loop that can fail to
-terminate does not belong in a scheduler.
-
-Each slot also **reserves room for the ones after it**: it may not be drawn so late that the
-remainder have nowhere left to go. Without that reservation a day pushed gradually later ran
-out of window and dropped its last few, so asking for the most that fits quietly delivered
-fewer — and the ceiling had to be set below what actually packs to hide it. A property test
-holds the two together: at every window and gap, the number the interface offers is the number
-the planner draws, every gap holds, and nothing lands after the window closes.
-
-The seed is the person and the local date. A day's plan is reproducible, so *why did it go off
-at 04:12* is a question answerable without having been watching.
+Everything else fell out. A rhythm change needs no announcing: the next tick works the answer
+out afresh, and the only thing a change does is drop a nudge that was scheduled under the old
+answer. An instance down for three hours sends one nudge on restart rather than discovering a
+queue of them. There is no `min_gap`, because the interval **is** the spacing and a second
+number saying so is a second number to keep in agreement with the first.
 
 ### The timezone is real
 
-Quiet hours are the only reason btw needs to know what time it is where somebody is, and they
-are reason enough — a reminder product that pings at four in the morning is uninstalled that
-morning.
+Waking hours are the only reason btw needs to know what time it is where somebody is, and
+they are reason enough — a reminder product that pings at four in the morning is uninstalled
+that morning.
 
 A stored UTC offset would be wrong twice a year, for weeks at a time, which is worse than
 wrong all the time. So the column holds an IANA name, captured from
 `Intl.DateTimeFormat().resolvedOptions().timeZone` and offered to the person rather than
-imposed.
+imposed. `time/tzdata` is imported into the binary — about 450KB — which makes the zone
+database a property of the program rather than of whatever the base image happens to carry.
 
-`time.LoadLocation` needs a zone database, and an Alpine image has none. btw imports
-`time/tzdata`: about 450KB of binary, no image change, and no `apk add tzdata` that a future
-base-image bump can quietly drop. It makes the zone database a property of the program rather
-than of what the runtime happens to contain.
-
-A zone that will not load falls back to UTC rather than refusing to plan. Wrong hours are
+A zone that will not load falls back to UTC rather than refusing to nudge. Wrong hours are
 visible and correctable; silence looks like the product not working.
 
-### A change takes effect today
+### Sleeping does not count towards the wait
 
-Changing the budget, the window or the timezone redraws the rest of the day immediately.
+Measured from a nudge the evening before, the answer at nine in the morning is always yes —
+and somebody would be pinged within a minute of waking, every day of their life. So a night
+that ran past the last nudge starts the clock at waking instead.
 
-It did not, on the theory that having the afternoon jump is a surprise. That was the wrong
-surprise to optimise for: asking for twelve a day and receiving two is a plan drawn yesterday
-behaving perfectly correctly, and from the outside it is indistinguishable from the setting
-being broken.
+Less half an interval, which the night is credited. That half is what makes the day hold the
+number asked for: starting cleanly at waking, the first nudge lands a whole interval in and
+the last lands exactly at bedtime, where it is outside the window and dropped — a day asking
+for three delivered two.
 
-Slots that already fired stay as they are — they happened, and rewriting them would be a lie
-about a notification somebody already saw. Only instants still ahead are replaced, and only
-future ones are written: a day redrawn at half past nine in the evening honestly yields a
-short evening rather than a morning that fires all at once or is swept as missed.
-
-The redraw is never fatal to the save. The rhythm is stored either way and tomorrow is planned
-from it, so a failure costs the rest of one day rather than the change.
-
-### Planning is lazy
-
-When the scheduler ticks and finds somebody has no plan for the local date they are currently
-in, it makes one. No cron per timezone, nothing planned for a disabled account, and nothing
-planned for somebody with no device — a plan for somebody nothing can be delivered to is a
-table filling up with rows that will only ever be dropped.
-
-A budget of zero writes nothing, so `HasPlan` says the day is unplanned and it is re-planned
-once a minute for nothing. That is cheap enough to prefer over a marker row that would have to
-be kept in step.
-
-### A missed slot is missed
-
-The scheduler ticks every minute. A slot whose time has come fires; a slot more than **ten
-minutes** late is marked fired and dropped, with a line in the log.
-
-An instance that was down for three hours does not catch up on restart. Three notifications
-arriving together, every one of them about a moment that has passed, is indistinguishable from
-a broken app and is exactly what teaches somebody to swipe the channel away for good.
-
-The rule is enforced in two places, because there are two ways of being late. `rhythm.Grace`
-covers this side: a slot nobody got to in ten minutes is dropped, whether the process was down
-or merely busy. `TTL: 3600` covers the other side, asking the push service to drop what it
-could not hand to a device within the hour — a phone that was off is not something this process
-can see.
-
-The two numbers differ on purpose. Ten minutes is how late a nudge may be *chosen*; an hour is
-how long it may sit in a queue somewhere else. Tightening the second to ten minutes would throw
-away nudges to a phone that was briefly in a tunnel.
+A nudge scheduled while awake that comes due after bedtime is dropped rather than sent late.
 
 ## Which reminder it carries
 

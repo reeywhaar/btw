@@ -19,7 +19,7 @@ import (
 // made is how a general appetite gets overruled by a preference nobody expressed.
 //
 // Zero does not mean "repeat freely". The weighting collapses a reminder's chance to nothing
-// the moment it is raised and recovers it over a nominal day, the gap between slots holds
+// the moment it is raised and recovers it over a nominal day, the interval between nudges holds
 // any two nudges apart, and the no-repeat rule stops the same one arriving twice running.
 const DefaultMinInterval = 0
 

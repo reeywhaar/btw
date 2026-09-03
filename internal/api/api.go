@@ -29,14 +29,17 @@ const SessionCookie = "btw_auth"
 // maxBody caps a request body. Every JSON document this accepts is a few hundred bytes.
 const maxBody = 64 << 10
 
-// Scheduler is what the API needs from internal/nudge: send one now, and redraw a day whose
-// rhythm has just changed.
+// Scheduler is what the API needs from internal/nudge: the ability to send one now.
+//
+// One method, because a rhythm change needs no announcing any more. There is no plan to
+// redraw — whether somebody is owed a nudge is worked out from the clock on the next tick,
+// so a change applies within five minutes of being saved by doing nothing at all.
 //
 // An interface rather than the concrete type, so internal/api does not import the package
-// that imports it — and so a test can drive both without a push service on the other end.
+// that imports it — and so a test can drive the button without a push service on the other
+// end.
 type Scheduler interface {
 	NudgeNow(ctx context.Context, principalID string) (outcome string, delivered int, err error)
-	Replan(ctx context.Context, principalID string) error
 }
 
 // Server holds what every handler needs.

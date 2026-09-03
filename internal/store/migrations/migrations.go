@@ -75,11 +75,14 @@ var Main = []Migration{
 	mainDeviceClientID,
 	mainRhythmSilent,
 	mainReminderNoDefaultFloor,
+	mainRhythmDropMinGap,
 }
 
-// Derived owns what the running process accumulated: sessions, the day's slots, and the
-// nudge log. Deletable between two runs without anybody losing something they wrote, which
-// is the only test for admission here.
+// Derived owns what the running process accumulated: sessions, the nudge waiting to go out,
+// and the nudge log. Deletable between two runs without anybody losing something they wrote,
+// which is the only test for admission here.
 var Derived = []Migration{
 	derivedInitialSchema,
+	derivedDropSlots,
+	derivedPendingNudge,
 }

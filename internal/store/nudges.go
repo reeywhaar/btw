@@ -67,6 +67,19 @@ func (s *Store) RecordNudge(ctx context.Context, nudgeID, principalID, reminderI
 	return n, nil
 }
 
+// LastNudgeAt is when this account was last nudged, whatever it carried.
+//
+// The scheduler's entire memory. There is no plan and nothing to claim: how long it has
+// been, and whether somebody is awake, is the whole decision.
+func (s *Store) LastNudgeAt(ctx context.Context, principalID string) (time.Time, error) {
+	var at sql.NullInt64
+	if err := s.derived.QueryRowContext(ctx,
+		`SELECT max(sent_at) FROM nudges WHERE principal_id = ?`, principalID).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("read last nudge: %w", err)
+	}
+	return timeFrom(at), nil
+}
+
 // LastNudgedReminder is the reminder the most recent nudge carried, which is the one the
 // next nudge may not carry.
 //

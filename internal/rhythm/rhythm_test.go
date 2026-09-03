@@ -1,6 +1,7 @@
 package rhythm
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,217 +10,140 @@ import (
 
 func defaults() store.Rhythm {
 	return store.Rhythm{
-		PrincipalID:   "p_test",
-		Timezone:      "Europe/Belgrade",
-		WindowEnabled: true,
-		WakeMinute:    store.DefaultWake,
-		SleepMinute:   store.DefaultSleep,
-		Budget:        store.DefaultBudget,
-		MinGap:        store.DefaultMinGap,
+		PrincipalID: "p_test", Timezone: "Europe/Belgrade", WindowEnabled: true,
+		WakeMinute: store.DefaultWake, SleepMinute: store.DefaultSleep,
+		Budget: store.DefaultBudget,
 	}
 }
 
-func TestPlanIsInsideTheWakingWindow(t *testing.T) {
-	r := defaults()
+func at(r store.Rhythm, day int, hour, minute int) time.Time {
 	loc := Location(r)
-	at, err := PlanDay(r, "2026-08-29", r.PrincipalID)
-	if err != nil {
-		t.Fatalf("PlanDay(): %v", err)
-	}
-	if len(at) != r.Budget {
-		t.Fatalf("PlanDay() gave %d slots, want %d", len(at), r.Budget)
-	}
-	for _, t0 := range at {
-		local := t0.In(loc)
-		m := local.Hour()*60 + local.Minute()
-		if m < r.WakeMinute || m >= r.SleepMinute {
-			t.Errorf("slot at %s is outside %02d:00–%02d:00", local.Format(time.TimeOnly), r.WakeMinute/60, r.SleepMinute/60)
-		}
-	}
+	return time.Date(2026, 9, day, hour, minute, 0, 0, loc).UTC()
 }
 
-func TestPlanRespectsTheMinimumGap(t *testing.T) {
+func TestNobodyIsNudgedWhileAsleep(t *testing.T) {
 	r := defaults()
-	gap := time.Duration(r.MinGap) * time.Minute
-	// Many days, because the failure this guards against is a rare draw rather than a
-	// systematic one: two adjacent blocks can each place their instant near the boundary.
-	for d := 1; d <= 60; d++ {
-		date := time.Date(2026, 9, d, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
-		at, err := PlanDay(r, date, r.PrincipalID)
-		if err != nil {
-			t.Fatalf("PlanDay(%s): %v", date, err)
+	for _, hour := range []int{0, 3, 7, 8, 22, 23} {
+		when := at(r, 3, hour, 0)
+		if Awake(r, when) {
+			t.Errorf("%02d:00 counts as awake", hour)
 		}
-		for i := 1; i < len(at); i++ {
-			if got := at[i].Sub(at[i-1]); got < gap {
-				t.Fatalf("%s: slots %d and %d are %s apart, want at least %s", date, i-1, i, got, gap)
-			}
+		// However long it has been, the answer outside waking hours is no.
+		if Due(r, when.Add(-30*time.Hour), when) {
+			t.Errorf("a nudge was due at %02d:00", hour)
+		}
+	}
+	for _, hour := range []int{9, 13, 21} {
+		if !Awake(r, at(r, 3, hour, 0)) {
+			t.Errorf("%02d:00 counts as asleep", hour)
 		}
 	}
 }
 
-func TestPlanIsReproducible(t *testing.T) {
+func TestSleepingDoesNotCountTowardsTheWait(t *testing.T) {
 	r := defaults()
-	first, _ := PlanDay(r, "2026-08-29", r.PrincipalID)
-	second, _ := PlanDay(r, "2026-08-29", r.PrincipalID)
-	if len(first) != len(second) {
-		t.Fatalf("two plans for one day differ in length: %d vs %d", len(first), len(second))
+	lastNight := at(r, 2, 21, 30)
+	morning := at(r, 3, 9, 0)
+
+	// Measured from last night, eleven hours have passed and every threshold is met — so a
+	// nudge would land at the same minute somebody woke up, every day of their life.
+	// Waking, less the half interval the night is credited — which is what keeps the last
+	// nudge of the day from landing exactly at bedtime and being dropped.
+	since := Since(r, lastNight, morning)
+	if want := at(r, 3, 9, 0).Add(-Interval(r) / 2); !since.Equal(want) {
+		t.Fatalf("Since() = %s, want %s", since, want)
 	}
-	for i := range first {
-		if !first[i].Equal(second[i]) {
-			t.Fatalf("slot %d differs between runs: %s vs %s", i, first[i], second[i])
-		}
+	if Due(r, since, morning) {
+		t.Error("a nudge was due at the exact minute of waking")
+	}
+	// It arrives partway into the morning instead.
+	later := morning.Add(Interval(r))
+	if !Due(r, since, later) {
+		t.Errorf("nothing was due %s after waking", Interval(r)*2)
 	}
 }
 
-func TestPlanDiffersBetweenDaysAndBetweenPeople(t *testing.T) {
+func TestTheDelayLandsInsideTheFirstTenthOfAnInterval(t *testing.T) {
 	r := defaults()
-	monday, _ := PlanDay(r, "2026-08-31", r.PrincipalID)
-	tuesday, _ := PlanDay(r, "2026-09-01", r.PrincipalID)
-	if len(monday) == 0 || monday[0].Equal(tuesday[0].AddDate(0, 0, -1)) {
-		t.Error("two days produced the same time of day; the plan is not varying")
-	}
+	r.Budget = 13 // an hour apiece
+	most := time.Duration(float64(Interval(r)) * Spread)
 
-	other, _ := PlanDay(r, "2026-08-31", "p_somebody_else")
-	if monday[0].Equal(other[0]) {
-		t.Error("two people got the same minute; the seed does not include who")
+	seen := map[time.Duration]bool{}
+	for range 400 {
+		d := Delay(r)
+		if d < 0 || d > most {
+			t.Fatalf("Delay() = %s, outside 0..%s", d, most)
+		}
+		seen[d.Truncate(time.Minute)] = true
+	}
+	// A nudge scheduled the instant a wait completes lands on a tick boundary every time,
+	// which is a five-minute mark anybody would notice. The delay is what moves it.
+	if len(seen) < 3 {
+		t.Errorf("the delay only ever took %d values", len(seen))
 	}
 }
 
-func TestPlanIsEmptyWhenNobodyWantsNudges(t *testing.T) {
+func TestABudgetOfNoneIsNeverDue(t *testing.T) {
 	r := defaults()
 	r.Budget = 0
-	at, err := PlanDay(r, "2026-08-29", r.PrincipalID)
-	if err != nil || len(at) != 0 {
-		t.Fatalf("PlanDay() with no budget = %d slots, %v; want 0, nil", len(at), err)
+	if Due(r, at(r, 3, 9, 0), at(r, 3, 20, 0)) {
+		t.Error("a nudge was due with no budget")
 	}
 }
 
-func TestLocalDateIsTheirDateNotOurs(t *testing.T) {
+func TestTheIntervalIsTheWakingDayOverTheBudget(t *testing.T) {
 	r := defaults()
-	r.Timezone = "Pacific/Auckland"
-	// Late on the 29th in UTC is already the 30th in Auckland, and the plan belongs to
-	// their day rather than to Greenwich's.
-	at := time.Date(2026, 8, 29, 22, 0, 0, 0, time.UTC)
-	if got := LocalDate(r, at); got != "2026-08-30" {
-		t.Errorf("LocalDate() = %q, want 2026-08-30", got)
+	r.Budget = 13
+	// Thirteen waking hours, thirteen nudges.
+	if got := Interval(r); got != time.Hour {
+		t.Errorf("Interval() = %s, want an hour", got)
+	}
+
+	// With no window the day is the window, which is where "eighteen a day" is one every
+	// eighty minutes.
+	r.WindowEnabled = false
+	r.Budget = 18
+	if got := Interval(r); got != 80*time.Minute {
+		t.Errorf("Interval() = %s, want 80m", got)
+	}
+
+	// Never shorter than a tick: nothing can be delivered between two of them.
+	r.WindowEnabled = true
+	r.Budget = store.MaxBudget
+	if got := Interval(r); got < Tick {
+		t.Errorf("Interval() = %s, shorter than the loop can deliver", got)
 	}
 }
 
-func TestAnUnknownZoneStillPlansSomething(t *testing.T) {
+func TestADayHoldsRoughlyWhatWasAskedFor(t *testing.T) {
+	r := defaults()
+	for _, budget := range []int{3, 9, 18, 24} {
+		r.Budget = budget
+		total := 0
+		for day := 1; day <= 14; day++ {
+			last := time.Time{}
+			for now := at(r, day, 0, 0); now.Before(at(r, day+1, 0, 0)); now = now.Add(Tick) {
+				if Due(r, Since(r, last, now), now) {
+					last = now
+					total++
+				}
+			}
+		}
+		average := float64(total) / 14
+		// The count is not a promise — it is what falls out of an interval and a waking
+		// window — but it should land near what somebody asked for rather than half of it.
+		if average < float64(budget)*0.7 || average > float64(budget)*1.1 {
+			t.Errorf("budget %d averaged %.1f a day", budget, average)
+		}
+		fmt.Printf("budget %2d -> %.1f a day (interval %s)\n", budget, average, Interval(r))
+	}
+}
+
+func TestAnUnknownZoneStillNudges(t *testing.T) {
 	r := defaults()
 	r.Timezone = "Mars/Olympus_Mons"
-	at, err := PlanDay(r, "2026-08-29", r.PrincipalID)
-	if err != nil {
-		t.Fatalf("PlanDay(): %v", err)
-	}
 	// Wrong hours are visible and correctable. Silence looks like the product not working.
-	if len(at) != r.Budget {
-		t.Errorf("PlanDay() with an unloadable zone gave %d slots, want %d", len(at), r.Budget)
-	}
-}
-
-func TestWithoutAWindowTheWholeDayIsAvailable(t *testing.T) {
-	r := defaults()
-	r.WindowEnabled = false
-	loc := Location(r)
-
-	// Somebody who switches the window off has asked to be nudged at any hour, which
-	// includes the ones they are asleep in. The planner does what it was told; the
-	// interface is what says so out loud.
-	seen := map[int]bool{}
-	for d := 1; d <= 40; d++ {
-		date := time.Date(2026, 9, d, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
-		at, err := PlanDay(r, date, r.PrincipalID)
-		if err != nil {
-			t.Fatalf("PlanDay(%s): %v", date, err)
-		}
-		if len(at) != r.Budget {
-			t.Fatalf("%s: %d slots, want %d", date, len(at), r.Budget)
-		}
-		for _, t0 := range at {
-			seen[t0.In(loc).Hour()] = true
-		}
-	}
-	// Blocks of eight hours across forty days should reach well outside 09:00–22:00.
-	var outside int
-	for hour := range seen {
-		if hour < store.DefaultWake/60 || hour >= store.DefaultSleep/60 {
-			outside++
-		}
-	}
-	if outside == 0 {
-		t.Error("no slot ever landed outside the old window; the whole day is not being used")
-	}
-}
-
-func TestSwitchingTheWindowOffDoesNotForgetTheHours(t *testing.T) {
-	r := defaults()
-	r.WindowEnabled = false
-
-	// The hours are kept so that switching it back on restores what somebody chose, rather
-	// than making them type 09:00 and 22:00 in again.
-	if r.WakeMinute != store.DefaultWake || r.SleepMinute != store.DefaultSleep {
-		t.Fatal("the hours were cleared")
-	}
-	if from, to := r.Bounds(); from != 0 || to != 24*60 {
-		t.Errorf("Bounds() = %d..%d, want the whole day", from, to)
-	}
-
-	r.WindowEnabled = true
-	if from, to := r.Bounds(); from != store.DefaultWake || to != store.DefaultSleep {
-		t.Errorf("Bounds() = %d..%d, want the hours back", from, to)
-	}
-}
-
-// TestTheCeilingIsWhatThePlannerCanActuallyFit is the promise the interface makes.
-//
-// The control offers up to MaxBudgetForWindow, so a number it offers that the planner then
-// declines to draw is the interface lying — quietly, once a day, in a way nobody would
-// connect to a slider they set weeks ago.
-func TestTheCeilingIsWhatThePlannerCanActuallyFit(t *testing.T) {
-	for _, wake := range []int{0, 9 * 60, 22 * 60} {
-		for _, sleep := range []int{wake + 45, wake + 90, wake + 240, wake + 780, 24 * 60} {
-			if sleep <= wake || sleep > 24*60 {
-				continue
-			}
-			for _, gap := range []int{15, 30, 45, 90} {
-				r := store.Rhythm{
-					PrincipalID: "p_probe", Timezone: "UTC", WindowEnabled: true,
-					WakeMinute: wake, SleepMinute: sleep, MinGap: gap,
-				}
-				r.Budget = r.MaxBudgetForWindow()
-
-				for d := 1; d <= 40; d++ {
-					date := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, d).Format(time.DateOnly)
-					at, err := PlanDay(r, date, r.PrincipalID)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if len(at) != r.Budget {
-						t.Fatalf("window %d..%d gap %d: the ceiling says %d and the planner drew %d",
-							wake, sleep, gap, r.Budget, len(at))
-					}
-					for i := 1; i < len(at); i++ {
-						if got := at[i].Sub(at[i-1]); got < time.Duration(gap)*time.Minute {
-							t.Fatalf("window %d..%d gap %d: slots %d and %d only %s apart",
-								wake, sleep, gap, i-1, i, got)
-						}
-					}
-					if last := at[len(at)-1]; !last.Before(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, d).Add(time.Duration(sleep) * time.Minute)) {
-						t.Fatalf("window %d..%d gap %d: a slot landed at or after the window closed", wake, sleep, gap)
-					}
-				}
-			}
-		}
-	}
-}
-
-func TestEighteenFitInThirteenWakingHours(t *testing.T) {
-	r := defaults()
-	// Eighteen nudges need seventeen gaps between them, not eighteen. Seventeen times
-	// forty-five is 765 minutes, which is inside a 780-minute window with a quarter of an
-	// hour to spare — so dividing the window by the gap was always one short.
-	if got := r.MaxBudgetForWindow(); got != 18 {
-		t.Fatalf("MaxBudgetForWindow() = %d, want 18", got)
+	if !Awake(r, time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)) {
+		t.Error("noon UTC counts as asleep under a zone that will not load")
 	}
 }

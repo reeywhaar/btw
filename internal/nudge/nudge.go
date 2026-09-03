@@ -19,26 +19,16 @@ import (
 	"btw/internal/webpush"
 )
 
-// Tick is how often the scheduler looks. A minute is the resolution a slot is planned at,
-// so looking more often would find nothing new.
-//
-// A ticker rather than a chain that reschedules itself after each pass: the spacing is
-// identical, but a chain has no owner — lose the goroutine between finishing one pass and
-// queueing the next and the work stops with nothing to notice.
-const Tick = time.Minute
-
-// sweepEvery is how often expired sessions and stale slots are cleared.
-const sweepEvery = 10 * time.Minute
-
 // Outcome says what happened to a nudge somebody asked for.
 //
 // Three answers rather than a bool, because two of the three failures are different
 // afternoons and a caller that cannot tell them apart has to guess at the message. "Nothing
 // to send" when the truth was "nothing reached your phone" is the kind of excuse that sends
 // somebody looking in the wrong place.
-// An alias rather than a defined type, so internal/api can declare its one-method Nudger
-// interface in terms of `string` and not have to import this package — which is what keeps
-// the dependency running one way.
+//
+// An alias rather than a defined type, so internal/api can declare its Scheduler interface
+// in terms of `string` and not import this package — which is what keeps the dependency
+// running one way.
 type Outcome = string
 
 const (
@@ -50,7 +40,10 @@ const (
 	Undelivered Outcome = "undelivered"
 )
 
-// Scheduler plans days, fires slots, and sends.
+// sweepEvery is how often expired sessions are cleared.
+const sweepEvery = 10 * time.Minute
+
+// Scheduler decides when somebody is owed a nudge, and sends it.
 type Scheduler struct {
 	store *store.Store
 	push  *webpush.Sender
@@ -63,13 +56,13 @@ func New(st *store.Store, push *webpush.Sender, log *slog.Logger) *Scheduler {
 
 // Run ticks until the context is cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
-	tick := time.NewTicker(Tick)
+	tick := time.NewTicker(rhythm.Tick)
 	defer tick.Stop()
 	sweep := time.NewTicker(sweepEvery)
 	defer sweep.Stop()
 
-	// Once at startup, so a process that has just been restarted plans the day it woke up
-	// into rather than waiting a minute to notice.
+	// Once at startup, so a process that has just been restarted does not wait a tick to
+	// notice somebody is overdue.
 	s.pass(ctx)
 
 	for {
@@ -84,7 +77,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// pass is one look at the clock: plan whatever is unplanned, fire whatever is due.
+// pass is one look at the clock.
+//
+// There is no plan to consult and nothing to claim. Whether somebody is owed a nudge is a
+// question about their waking hours and when they were last nudged, and both are already
+// known — so a restart mid-day costs nothing, a change to the rhythm applies at the very
+// next tick, and an instance that was down for three hours sends one nudge rather than
+// discovering a queue of them.
 func (s *Scheduler) pass(ctx context.Context) {
 	now := s.store.Now()
 
@@ -94,89 +93,60 @@ func (s *Scheduler) pass(ctx context.Context) {
 		return
 	}
 	for _, id := range people {
-		if err := s.plan(ctx, id, now); err != nil {
-			s.log.Error("could not plan a day", "principal", id, "err", err)
-		}
-	}
-
-	due, err := s.store.DueSlots(ctx, now, rhythm.Grace)
-	if err != nil {
-		s.log.Error("scheduler could not read due slots", "err", err)
-		return
-	}
-	for _, slot := range due {
-		// Claimed before anything is sent, so two overlapping passes cannot both fire one
-		// slot. The claim is the UPDATE itself rather than a note made after deciding to
-		// claim.
-		got, err := s.store.ClaimSlot(ctx, slot, now)
-		if err != nil {
-			s.log.Error("could not claim a slot", "principal", slot.PrincipalID, "err", err)
-			continue
-		}
-		if !got {
-			continue
-		}
-		if _, _, err := s.deliver(ctx, slot.PrincipalID, store.RespectFloor); err != nil {
-			s.log.Error("could not deliver a nudge", "principal", slot.PrincipalID, "err", err)
+		if err := s.consider(ctx, id, now); err != nil {
+			s.log.Error("could not decide whether a nudge is due", "principal", id, "err", err)
 		}
 	}
 }
 
-// plan makes a day's slots if that day has none. Lazy rather than a cron per timezone:
-// nothing is planned for somebody with nowhere to deliver, and nothing has to know when
-// midnight is in forty places.
-func (s *Scheduler) plan(ctx context.Context, principalID string, now time.Time) error {
+// consider is the whole of the scheduling decision for one person.
+//
+// Three states and no plan.
+//
+//  1. A nudge is waiting and its moment has come — send it.
+//  2. A nudge is waiting and its moment has not — leave it alone. Deciding again while one
+//     stands would move it, and a nudge that keeps being rescheduled never arrives.
+//  3. Nothing is waiting — work out whether one is owed, and if so schedule it a random
+//     moment from now rather than firing here. The loop only wakes on a tick, so firing on
+//     the spot would put every nudge on a five-minute mark.
+func (s *Scheduler) consider(ctx context.Context, principalID string, now time.Time) error {
 	rh, err := s.store.Rhythm(ctx, principalID)
 	if err != nil {
 		return err
 	}
-	date := rhythm.LocalDate(rh, now)
-	planned, err := s.store.HasPlan(ctx, principalID, date)
-	if err != nil || planned {
-		return err
-	}
-	at, err := rhythm.PlanDay(rh, date, principalID)
+
+	scheduled, err := s.store.ScheduledNudge(ctx, principalID)
 	if err != nil {
 		return err
 	}
-	if len(at) == 0 {
+	if !scheduled.IsZero() {
+		if scheduled.After(now) {
+			return nil
+		}
+		// Its moment came. Claiming is the delete, so two overlapping ticks cannot both
+		// send the same one.
+		got, err := s.store.ClaimScheduledNudge(ctx, principalID, now)
+		if err != nil || !got {
+			return err
+		}
+		// Scheduled while awake and arrived after bedtime — an evening that ran out before
+		// the nudge did. Dropped rather than sent late.
+		if !rhythm.Awake(rh, now) {
+			s.log.Debug("a scheduled nudge came due after bedtime", "principal", principalID)
+			return nil
+		}
+		_, _, err = s.deliver(ctx, principalID, store.RespectFloor)
+		return err
+	}
+
+	last, err := s.store.LastNudgeAt(ctx, principalID)
+	if err != nil {
+		return err
+	}
+	if !rhythm.Due(rh, rhythm.Since(rh, last, now), now) {
 		return nil
 	}
-	if err := s.store.PlanDay(ctx, principalID, date, at); err != nil {
-		return err
-	}
-	s.log.Debug("planned a day", "principal", principalID, "date", date, "slots", len(at))
-	return nil
-}
-
-// Replan redraws the rest of today under a rhythm that has just changed.
-//
-// Without it, asking for twelve a day and receiving two is the correct behaviour of a plan
-// drawn yesterday under the old answer — which is indistinguishable, from the outside, from
-// the setting not working. A change somebody makes deliberately should take effect while
-// they are still looking at it.
-//
-// Slots that already fired stay: they happened. Only the rest of the day is redrawn, and a
-// change made late in the evening honestly yields a short evening.
-func (s *Scheduler) Replan(ctx context.Context, principalID string) error {
-	now := s.store.Now()
-
-	rh, err := s.store.Rhythm(ctx, principalID)
-	if err != nil {
-		return err
-	}
-	date := rhythm.LocalDate(rh, now)
-	at, err := rhythm.PlanDay(rh, date, principalID)
-	if err != nil {
-		return err
-	}
-	planned, err := s.store.ReplanDay(ctx, principalID, date, at, now)
-	if err != nil {
-		return err
-	}
-	s.log.Info("day replanned", "principal", principalID, "date", date,
-		"budget", rh.Budget, "remaining", planned)
-	return nil
+	return s.store.ScheduleNudge(ctx, principalID, now.Add(rhythm.Delay(rh)))
 }
 
 // NudgeNow sends one immediately, for the button that proves the chain.
@@ -261,7 +231,7 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 // took it.
 //
 // Concurrently because a phone whose push service is slow must not delay the laptop's, and
-// because this runs inside a scheduler pass that other people's slots are waiting behind.
+// because this runs inside a pass that everybody else's turn is waiting behind.
 func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload []byte) int {
 	var (
 		wg sync.WaitGroup
@@ -310,12 +280,5 @@ func (s *Scheduler) sweep(ctx context.Context) {
 		s.log.Error("could not sweep sessions", "err", err)
 	} else if n > 0 {
 		s.log.Debug("swept sessions", "count", n)
-	}
-	// Anything past the grace window is marked fired without sending, so the due query
-	// stays small and a restart does not reconsider last week.
-	if n, err := s.store.ExpireSlots(ctx, s.store.Now().Add(-rhythm.Grace)); err != nil {
-		s.log.Error("could not expire slots", "err", err)
-	} else if n > 0 {
-		s.log.Info("slots missed", "count", n)
 	}
 }

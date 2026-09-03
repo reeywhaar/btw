@@ -18,15 +18,13 @@ const (
 	DefaultWake     = 9 * 60
 	DefaultSleep    = 22 * 60
 	DefaultBudget   = 3
-	DefaultMinGap   = 45
 )
 
-// MaxBudget is a ceiling on top of what the window can hold, so a control cannot ask for a
-// nudge every four minutes even in a very long waking day.
+// MaxBudget is the most anybody may ask for in a day.
 //
-// The window and the gap still bind first, and usually well below this: nine to ten at
-// forty-five minutes apart holds seventeen. Twenty-four is reachable with the window
-// switched off, which is somebody asking to be nudged roughly once an hour, all day.
+// A plain number now, and nothing else bounds it. The interval is the waking day divided by
+// the budget and is floored at one tick, so no budget can ask the loop for something it
+// cannot deliver — and there is no second ceiling to keep in agreement with a planner.
 const MaxBudget = 24
 
 // Rhythm is one person's answer to how often, and between which hours.
@@ -45,7 +43,6 @@ type Rhythm struct {
 	SleepMinute   int
 
 	Budget int
-	MinGap int
 
 	// Silent means the notification arrives without a sound. The reminder still shows; it
 	// simply does not announce itself.
@@ -70,29 +67,6 @@ func (r Rhythm) Window() time.Duration {
 	return time.Duration(end-start) * time.Minute
 }
 
-// MaxBudgetForWindow is how many nudges this window can hold at this spacing.
-//
-// A budget the window cannot hold is refused rather than accepted and quietly squashed:
-// asking for eight and receiving six, with no explanation, is worse than being told the
-// window is too short.
-func (r Rhythm) MaxBudgetForWindow() int {
-	if r.MinGap <= 0 {
-		return MaxBudget
-	}
-	start, end := r.Bounds()
-
-	// N nudges need N-1 gaps between them, not N. Dividing the window by the gap counts
-	// gaps and then reports that as a number of nudges, which is one short — thirteen
-	// waking hours at forty-five minutes apart were offered as seventeen when eighteen fit
-	// with a quarter of an hour to spare.
-	//
-	// The minus one on the window is the strict inequality the planner enforces: a slot has
-	// to land *before* the window closes, so a window of exactly one gap holds one nudge
-	// rather than two.
-	n := (end-start-1)/r.MinGap + 1
-	return min(max(n, 1), MaxBudget)
-}
-
 // Rhythm reads one person's, or the defaults if they have never touched it.
 //
 // A missing row is the defaults rather than an error, and nothing writes a row at account
@@ -107,13 +81,12 @@ func (s *Store) Rhythm(ctx context.Context, principalID string) (Rhythm, error) 
 		WakeMinute:    DefaultWake,
 		SleepMinute:   DefaultSleep,
 		Budget:        DefaultBudget,
-		MinGap:        DefaultMinGap,
 	}
 	err := s.main.QueryRowContext(ctx,
-		`SELECT timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap, silent
+		`SELECT timezone, window_enabled, wake_minute, sleep_minute, budget, silent
 		   FROM rhythm WHERE principal_id = ?`,
 		principalID).Scan(&r.Timezone, &r.WindowEnabled, &r.WakeMinute, &r.SleepMinute,
-		&r.Budget, &r.MinGap, &r.Silent)
+		&r.Budget, &r.Silent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, nil
 	}
@@ -139,36 +112,25 @@ func (s *Store) SetRhythm(ctx context.Context, r Rhythm) error {
 		// would be a save that fails much later, for a reason nobody would connect to this.
 		//
 		// Night owls want 22:00–02:00 and cannot have it yet: a window crossing midnight
-		// means slots belonging to two local dates, which the planner does not model.
+		// means a waking day spanning two local dates, which Since does not model.
 		return Invalid("for now the waking window has to start and end on the same day")
-	case r.MinGap < 0:
-		return Invalid("the gap between nudges cannot be negative")
 	case r.Budget < 0:
 		return Invalid("a day cannot hold fewer than no nudges")
-	case r.Budget > r.MaxBudgetForWindow():
-		start, end := r.Bounds()
-		if !r.WindowEnabled {
-			return Invalid("%d a day will not fit into a day at %d minutes apart; %d is the most",
-				r.Budget, r.MinGap, r.MaxBudgetForWindow())
-		}
-		return Invalid("%d a day will not fit between %s and %s at %d minutes apart; %d is the most",
-			r.Budget, clock(start), clock(end), r.MinGap, r.MaxBudgetForWindow())
+	case r.Budget > MaxBudget:
+		return Invalid("%d a day is more than btw will send; %d is the most", r.Budget, MaxBudget)
 	}
 
 	_, err := s.main.ExecContext(ctx,
-		`INSERT INTO rhythm (principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap, silent)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rhythm (principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, silent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (principal_id) DO UPDATE SET
 		   timezone = excluded.timezone, window_enabled = excluded.window_enabled,
 		   wake_minute = excluded.wake_minute, sleep_minute = excluded.sleep_minute,
-		   budget = excluded.budget, min_gap = excluded.min_gap, silent = excluded.silent`,
+		   budget = excluded.budget, silent = excluded.silent`,
 		r.PrincipalID, r.Timezone, r.WindowEnabled, r.WakeMinute, r.SleepMinute, r.Budget,
-		r.MinGap, r.Silent)
+		r.Silent)
 	if err != nil {
 		return fmt.Errorf("set rhythm: %w", err)
 	}
 	return nil
 }
-
-// clock renders minutes-since-midnight for a message somebody reads.
-func clock(m int) string { return fmt.Sprintf("%02d:%02d", m/60, m%60) }

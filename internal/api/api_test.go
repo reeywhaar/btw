@@ -24,12 +24,6 @@ type fakeNudger struct {
 	called    bool
 	outcome   string
 	delivered int
-	replanned int
-}
-
-func (f *fakeNudger) Replan(context.Context, string) error {
-	f.replanned++
-	return nil
 }
 
 func (f *fakeNudger) NudgeNow(context.Context, string) (string, int, error) {

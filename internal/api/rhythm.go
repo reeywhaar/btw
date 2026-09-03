@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"btw/internal/store"
 )
 
 func (s *Server) getRhythm(w http.ResponseWriter, r *http.Request) {
@@ -16,11 +18,10 @@ func (s *Server) getRhythm(w http.ResponseWriter, r *http.Request) {
 		"wake_minute":    rh.WakeMinute,
 		"sleep_minute":   rh.SleepMinute,
 		"budget":         rh.Budget,
-		"min_gap":        rh.MinGap,
 		"silent":         rh.Silent,
-		// What the window can hold, so the interface can bound its own control rather
-		// than offering a number the save will refuse.
-		"max_budget": rh.MaxBudgetForWindow(),
+		// The most anybody may ask for. A plain number: the interval is the waking day
+		// divided by the budget and is floored at one tick, so nothing else bounds it.
+		"max_budget": store.MaxBudget,
 	})
 	// No next_nudge_at, and there never will be one. A person who can see that the next
 	// nudge is at 14:32 is a person waiting for 14:32, and the surprise is the mechanism.
@@ -41,7 +42,6 @@ func (s *Server) patchRhythm(w http.ResponseWriter, r *http.Request) {
 		WakeMinute    *int    `json:"wake_minute"`
 		SleepMinute   *int    `json:"sleep_minute"`
 		Budget        *int    `json:"budget"`
-		MinGap        *int    `json:"min_gap"`
 		Silent        *bool   `json:"silent"`
 	}
 	if !decode(w, r, &req) {
@@ -63,9 +63,6 @@ func (s *Server) patchRhythm(w http.ResponseWriter, r *http.Request) {
 	if req.Budget != nil {
 		next.Budget = *req.Budget
 	}
-	if req.MinGap != nil {
-		next.MinGap = *req.MinGap
-	}
 	if req.Silent != nil {
 		next.Silent = *req.Silent
 	}
@@ -74,16 +71,15 @@ func (s *Server) patchRhythm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The rest of today is redrawn under the new answer.
+	// Anything already scheduled was decided under the old answer — at an interval that has
+	// changed, or for a moment that may now be the middle of the night. Dropping it lets the
+	// next tick work the whole thing out again, which is the only thing a rhythm change has
+	// to do now that there is no plan to redraw.
 	//
-	// It did not used to be, on the theory that having the afternoon jump is a surprise. It
-	// is the smaller one: asking for twelve a day and getting two is the plan from
-	// yesterday behaving correctly, and is indistinguishable from the setting being broken.
-	//
-	// Never fatal. The rhythm is saved either way, and tomorrow is planned from it — a
-	// failure here costs the rest of one day, not the change.
-	if err := s.nudger.Replan(r.Context(), p.ID); err != nil {
-		s.log.Error("could not replan the day", "principal", p.ID, "err", err)
+	// Never fatal: the rhythm is saved either way, and the worst a failure costs is one
+	// nudge arriving on the old schedule.
+	if err := s.store.ClearScheduledNudge(r.Context(), p.ID); err != nil {
+		s.log.Error("could not clear the scheduled nudge", "principal", p.ID, "err", err)
 	}
 	s.getRhythm(w, r)
 }

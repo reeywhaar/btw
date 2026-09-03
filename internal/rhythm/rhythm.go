@@ -1,42 +1,46 @@
-// Package rhythm decides when somebody is nudged, and never what with.
+// Package rhythm decides whether somebody is due a nudge, and never what with.
 //
-// Splitting those two questions is the design, not a tidiness. When is a fact about a
-// person's day and can be planned hours ahead; what is a fact about their reminders at one
-// instant and must not be — see internal/pick. Neither package imports the other.
+// Splitting those two questions is the design, not a tidiness. Whether it is time is a fact
+// about the clock and a person's waking hours; what to send is a fact about their reminders
+// at that instant, and lives in internal/pick. Neither package imports the other.
 //
-// Everything here is a pure function of a rhythm, a date and a seed. It opens no
+// Everything here is a pure function of a rhythm, two instants and a seed. It opens no
 // transaction and reads no clock, which is what makes the interesting behaviour testable
-// against a fixed seed rather than against a database at four in the afternoon.
+// against a fixed seed rather than against an afternoon.
 package rhythm
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"fmt"
 	"math/rand/v2"
 	"time"
 
 	// The zone database, compiled into the binary.
 	//
-	// About 450KB, and it buys the one thing btw needs local time for: quiet hours. A
+	// About 450KB, and it buys the one thing btw needs local time for: waking hours. A
 	// reminder product that pings at four in the morning is uninstalled that morning. The
-	// alternative was `apk add tzdata` in the image, which is a property of a base image
+	// alternative was installing tzdata in the image, which is a property of a base image
 	// that a future bump can quietly drop — this is a property of the program.
 	//
-	// A stored UTC offset instead of an IANA name would have been wrong twice a year for
-	// weeks at a time, which is worse than wrong all the time.
+	// A stored UTC offset instead of an IANA name would be wrong twice a year for weeks at
+	// a time, which is worse than wrong all the time.
 	_ "time/tzdata"
 
 	"btw/internal/store"
 )
 
-// Grace is how late a nudge may be before it is dropped instead of sent.
+// Tick is how often the scheduler asks. It is also the floor on how close two nudges can
+// land, since nothing can happen between two ticks.
+const Tick = 5 * time.Minute
+
+// Spread is how far past the interval a nudge may be scheduled, as a fraction of it.
 //
-// A missed slot is missed. An instance that was down for three hours does not catch up on
-// restart: three notifications arriving together, every one of them about a moment that
-// has passed, is indistinguishable from a broken app and is what teaches somebody to swipe
-// the channel away for good.
-const Grace = 10 * time.Minute
+// The loop asks every Tick, so the moment a wait completes is always a tick boundary.
+// Firing there would put every nudge on a five-minute mark; scheduling one a random moment
+// later puts it anywhere.
+//
+// Small on purpose. It is enough that nobody can set a watch by it, and not so much that
+// the day stops holding roughly the number somebody asked for — which is not a promise
+// anyway. A day that delivers eight when the rhythm says nine behaved correctly.
+const Spread = 0.10
 
 // Location resolves a rhythm's timezone, falling back to UTC.
 //
@@ -51,94 +55,83 @@ func Location(r store.Rhythm) *time.Location {
 	return loc
 }
 
-// LocalDate is the person's own date at that instant, as YYYY-MM-DD.
-//
-// The plan is keyed by this rather than by a UTC date, which is what makes it one plan per
-// waking day rather than one per rotation of the earth measured from Greenwich.
-func LocalDate(r store.Rhythm, at time.Time) string {
-	return at.In(Location(r)).Format(time.DateOnly)
+// Awake reports whether `at` falls inside the person's waking hours.
+func Awake(r store.Rhythm, at time.Time) bool {
+	if !r.WindowEnabled {
+		return true
+	}
+	local := at.In(Location(r))
+	minute := local.Hour()*60 + local.Minute()
+	return minute >= r.WakeMinute && minute < r.SleepMinute
 }
 
-// PlanDay chooses the instants a person will be nudged at on one of their local days.
+// Interval is the average time between nudges: the waking day divided by the budget.
 //
-// Stratified rather than rejection-sampled: the window is cut into `budget` equal blocks
-// and one instant is drawn uniformly inside each. That terminates — always, on the first
-// try — and gives both properties that matter. Unpredictable inside its block, so nobody
-// can wait for it; never three in an hour, because each block holds exactly one.
-//
-// Uniform rejection sampling with a minimum-gap constraint would give a slightly nicer
-// distribution and can loop for a long time on a short window, which is a bad trade for a
-// function that runs inside a scheduler tick.
-//
-// The seed is the person and the date, so a day's plan is reproducible. "Why did it go off
-// at 04:12" is a question worth being able to answer without having been watching.
-func PlanDay(r store.Rhythm, date string, seed string) ([]time.Time, error) {
+// Never shorter than a Tick, because nothing can be delivered between two of them and
+// promising otherwise would be promising something the loop cannot do.
+func Interval(r store.Rhythm) time.Duration {
 	if r.Budget <= 0 {
-		return nil, nil
+		return 0
 	}
-	loc := Location(r)
-	day, err := time.ParseInLocation(time.DateOnly, date, loc)
-	if err != nil {
-		return nil, fmt.Errorf("plan %s: %w", date, err)
-	}
-
-	// Bounds rather than the hours directly, so "no window" is one answer in one place —
-	// the whole local day — instead of a condition the planner has to remember.
-	//
-	// Added as minutes rather than by constructing a time from wall-clock fields, so a day
-	// on which the clocks change is a shorter or longer window rather than an invalid or
-	// ambiguous local time that the parser has to guess at.
-	from, to := r.Bounds()
-	start := day.Add(time.Duration(from) * time.Minute)
-	end := day.Add(time.Duration(to) * time.Minute)
-	window := end.Sub(start)
-	if window <= 0 {
-		return nil, nil
-	}
-
-	rng := rand.New(rand.NewPCG(seedFrom(seed+"/"+date), 0x9E3779B97F4A7C15))
-	gap := time.Duration(r.MinGap) * time.Minute
-	block := window / time.Duration(r.Budget)
-
-	out := make([]time.Time, 0, r.Budget)
-	var last time.Time
-	for i := range r.Budget {
-		// Each slot is drawn inside its own block, which is what keeps them spread and
-		// unpredictable without a rejection loop that might not terminate.
-		lo := start.Add(block * time.Duration(i))
-		hi := lo.Add(block)
-
-		// Two bounds the block does not know about.
-		//
-		// It cannot start before the previous slot plus the gap — two adjacent blocks can
-		// otherwise place their instants either side of a boundary.
-		if !last.IsZero() && last.Add(gap).After(lo) {
-			lo = last.Add(gap)
-		}
-		// And it cannot start so late that the slots after it have nowhere to go. Reserving
-		// their room here is what makes the ceiling honest: without it a day pushed
-		// gradually later ran out of room and dropped its last few, so asking for the most
-		// that fits quietly delivered fewer.
-		latest := end.Add(-time.Duration(r.Budget-1-i)*gap - time.Minute)
-		if lo.After(latest) {
-			lo = latest
-		}
-		if hi.After(latest) {
-			hi = latest
-		}
-
-		at := lo
-		if hi.After(lo) {
-			at = lo.Add(time.Duration(rng.Int64N(int64(hi.Sub(lo)))))
-		}
-		out = append(out, at.UTC())
-		last = at
-	}
-	return out, nil
+	start, end := r.Bounds()
+	window := time.Duration(end-start) * time.Minute
+	return max(window/time.Duration(r.Budget), Tick)
 }
 
-// seedFrom turns a string into a reproducible 64-bit seed.
-func seedFrom(s string) uint64 {
-	sum := sha256.Sum256([]byte(s))
-	return binary.BigEndian.Uint64(sum[:8])
+// Due reports whether a nudge is owed, given when the clock started running.
+//
+// Two rules and nothing else.
+//
+// **Not while somebody is asleep.** Outside the waking hours the answer is no, whatever the
+// arithmetic says.
+//
+// **Long enough since the last one.** Long enough is the interval, plainly. The randomness
+// lives in when the nudge is then scheduled for, not in the threshold — one source of it is
+// easier to reason about than two, and a threshold that moved would have to be seeded from
+// something stable or the effective wait would be the shortest of many rolls.
+func Due(r store.Rhythm, since, now time.Time) bool {
+	if r.Budget <= 0 || !Awake(r, now) {
+		return false
+	}
+	if since.IsZero() {
+		return true
+	}
+	interval := Interval(r)
+	return interval > 0 && !now.Before(since.Add(interval))
+}
+
+// Delay is how long after deciding a nudge should actually go out: somewhere in the first
+// Spread of an interval.
+func Delay(r store.Rhythm) time.Duration {
+	window := time.Duration(float64(Interval(r)) * Spread)
+	if window <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int64N(int64(window) + 1))
+}
+
+// Since is when the wait for the next nudge started running.
+//
+// Ordinarily the last nudge. But sleeping does not count towards the wait: measured from a
+// nudge the evening before, the answer at nine in the morning is always yes, and somebody
+// would be pinged within a minute of waking every day of their life.
+//
+// So a night that ran past the last nudge starts the clock at waking — less half an
+// interval, which the night is credited.
+//
+// That half is what makes the day hold the number asked for. Starting cleanly at waking, the
+// first nudge lands a whole interval in and the last lands exactly at bedtime, where it is
+// outside the window and dropped: a day asking for three delivered two. Half an interval of
+// credit puts the first one halfway in and the last one half an interval short of bedtime.
+func Since(r store.Rhythm, lastNudge, now time.Time) time.Time {
+	if !r.WindowEnabled {
+		return lastNudge
+	}
+	local := now.In(Location(r))
+	woke := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location()).
+		Add(time.Duration(r.WakeMinute) * time.Minute)
+	if lastNudge.Before(woke) {
+		return woke.Add(-Interval(r) / 2)
+	}
+	return lastNudge
 }

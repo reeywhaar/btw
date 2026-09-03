@@ -244,78 +244,6 @@ func TestRegisteringAnEndpointTakesItFromWhoeverHadIt(t *testing.T) {
 	}
 }
 
-func TestRhythmRefusesABudgetTheWindowCannotHold(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	r, err := s.Rhythm(ctx, p.ID)
-	if err != nil {
-		t.Fatalf("Rhythm(): %v", err)
-	}
-	if r.Budget != DefaultBudget {
-		t.Errorf("Budget = %d, want the default %d", r.Budget, DefaultBudget)
-	}
-
-	// Thirteen waking hours hold twelve nudges at forty-five minutes apart, so make the
-	// gap the binding constraint instead: two hours apart leaves room for six.
-	r.MinGap = 120
-	r.Budget = 12
-	if err := s.SetRhythm(ctx, r); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("SetRhythm() with an impossible budget = %v, want ErrInvalid", err)
-	}
-
-	r.Budget = 4
-	if err := s.SetRhythm(ctx, r); err != nil {
-		t.Fatalf("SetRhythm(): %v", err)
-	}
-	if got, _ := s.Rhythm(ctx, p.ID); got.Budget != 4 {
-		t.Errorf("Budget = %d, want 4", got.Budget)
-	}
-}
-
-func TestSlotIsClaimedOnce(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	if err := s.PlanDay(ctx, p.ID, "2026-08-29", []time.Time{now}); err != nil {
-		t.Fatalf("PlanDay(): %v", err)
-	}
-	due, err := s.DueSlots(ctx, now, 10*time.Minute)
-	if err != nil || len(due) != 1 {
-		t.Fatalf("DueSlots() = %d, %v; want 1, nil", len(due), err)
-	}
-
-	// Two overlapping ticks must not both send for one slot.
-	first, err := s.ClaimSlot(ctx, due[0], now)
-	if err != nil || !first {
-		t.Fatalf("ClaimSlot() first = %v, %v; want true, nil", first, err)
-	}
-	second, err := s.ClaimSlot(ctx, due[0], now)
-	if err != nil || second {
-		t.Fatalf("ClaimSlot() second = %v, %v; want false, nil", second, err)
-	}
-}
-
-func TestAMissedSlotIsMissed(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	if err := s.PlanDay(ctx, p.ID, "2026-08-29", []time.Time{at}); err != nil {
-		t.Fatalf("PlanDay(): %v", err)
-	}
-	// Three hours later, which is what a restart after an outage looks like. Nothing is
-	// due: three nudges at once about moments that have passed is the failure this
-	// prevents.
-	if due, _ := s.DueSlots(ctx, at.Add(3*time.Hour), 10*time.Minute); len(due) != 0 {
-		t.Fatalf("DueSlots() long after the slot = %d, want 0", len(due))
-	}
-}
-
 func TestTheWakingWindowIsOptionalAndItsHoursSurvive(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -355,30 +283,6 @@ func TestTheWakingWindowIsOptionalAndItsHoursSurvive(t *testing.T) {
 	}
 	if from, to := got.Bounds(); from != 0 || to != 24*60 {
 		t.Errorf("Bounds() = %d..%d, want the whole day", from, to)
-	}
-}
-
-func TestABudgetIsCheckedAgainstTheWindowThatWillActuallyBeUsed(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	r, _ := s.Rhythm(ctx, p.ID)
-	r.WakeMinute = 9 * 60
-	r.SleepMinute = 11 * 60 // two hours
-	r.MinGap = 45
-	r.Budget = 6
-
-	// Two hours at forty-five minutes apart holds two, so six is refused with a sentence
-	// naming the most it will take.
-	if err := s.SetRhythm(ctx, r); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("SetRhythm() into a two-hour window = %v, want ErrInvalid", err)
-	}
-
-	// The same six fits once the window is off, because then the day is the window.
-	r.WindowEnabled = false
-	if err := s.SetRhythm(ctx, r); err != nil {
-		t.Fatalf("SetRhythm() with no window = %v, want it to fit", err)
 	}
 }
 
@@ -676,110 +580,6 @@ func TestARowWithNoBrowserIdentityCollapsesNothing(t *testing.T) {
 	}
 }
 
-func TestReplanningKeepsWhatAlreadyFiredAndRedrawsTheRest(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	morning := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
-	noon := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	s.SetClock(func() time.Time { return noon })
-
-	// A day already half spent: one fired this morning, one still to come.
-	if err := s.PlanDay(ctx, p.ID, "2026-08-29", []time.Time{morning, noon.Add(4 * time.Hour)}); err != nil {
-		t.Fatalf("PlanDay(): %v", err)
-	}
-	due, _ := s.DueSlots(ctx, morning, time.Hour)
-	if len(due) != 1 {
-		t.Fatalf("DueSlots() = %d, want the morning slot", len(due))
-	}
-	if _, err := s.ClaimSlot(ctx, due[0], morning); err != nil {
-		t.Fatalf("ClaimSlot(): %v", err)
-	}
-
-	// Now the rhythm changes: four more this afternoon, and one instant already past.
-	planned, err := s.ReplanDay(ctx, p.ID, "2026-08-29", []time.Time{
-		morning.Add(time.Hour), // in the past — must not be scheduled
-		noon.Add(time.Hour),
-		noon.Add(2 * time.Hour),
-		noon.Add(3 * time.Hour),
-	}, noon)
-	if err != nil {
-		t.Fatalf("ReplanDay(): %v", err)
-	}
-	if planned != 3 {
-		t.Errorf("planned %d, want the 3 still ahead", planned)
-	}
-
-	// The morning one happened; rewriting it would be a lie about a notification somebody
-	// already saw.
-	var fired int
-	if err := s.derived.QueryRowContext(ctx,
-		`SELECT count(*) FROM slots WHERE principal_id = ? AND fired_at IS NOT NULL`, p.ID).Scan(&fired); err != nil {
-		t.Fatalf("count fired: %v", err)
-	}
-	if fired != 1 {
-		t.Errorf("%d fired slots survived, want 1", fired)
-	}
-	// The one that had not fired was replaced rather than added to.
-	var ahead int
-	if err := s.derived.QueryRowContext(ctx,
-		`SELECT count(*) FROM slots WHERE principal_id = ? AND fired_at IS NULL`, p.ID).Scan(&ahead); err != nil {
-		t.Fatalf("count ahead: %v", err)
-	}
-	if ahead != 3 {
-		t.Errorf("%d slots ahead, want 3", ahead)
-	}
-}
-
-func TestReplanningLateInTheDayYieldsAShortEvening(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	evening := time.Date(2026, 8, 29, 21, 30, 0, 0, time.UTC)
-	s.SetClock(func() time.Time { return evening })
-
-	// A whole day's worth of instants, nearly all of them already gone.
-	var day []time.Time
-	for h := 9; h < 22; h++ {
-		day = append(day, time.Date(2026, 8, 29, h, 0, 0, 0, time.UTC))
-	}
-	planned, err := s.ReplanDay(ctx, p.ID, "2026-08-29", day, evening)
-	if err != nil {
-		t.Fatalf("ReplanDay(): %v", err)
-	}
-	// Inserting the morning would either fire it all at once or be swept as missed. An
-	// honest short evening is the better answer.
-	if planned != 0 {
-		t.Errorf("planned %d slots at half past nine, want none in the past", planned)
-	}
-}
-
-func TestABudgetCanNowReachTwentyFour(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	p := testPrincipal(t, s)
-
-	r, _ := s.Rhythm(ctx, p.ID)
-	// The window and gap still bind first: nine to ten at forty-five minutes apart holds
-	// eighteen, not twenty-four. Eighteen and not seventeen because eighteen nudges need
-	// seventeen gaps between them — 17 × 45 is 765 minutes inside a 780-minute window.
-	if got := r.MaxBudgetForWindow(); got != 18 {
-		t.Errorf("MaxBudgetForWindow() in the default window = %d, want 18", got)
-	}
-
-	// Switched off, the day is the window and the ceiling is what binds.
-	r.WindowEnabled = false
-	if got := r.MaxBudgetForWindow(); got != MaxBudget {
-		t.Errorf("MaxBudgetForWindow() with no window = %d, want %d", got, MaxBudget)
-	}
-	r.Budget = 24
-	if err := s.SetRhythm(ctx, r); err != nil {
-		t.Errorf("SetRhythm(24) = %v, want it accepted", err)
-	}
-}
-
 func TestAReminderInheritsNoFloor(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -824,5 +624,31 @@ func TestAStatedFloorIsStillObeyed(t *testing.T) {
 	}
 	if got, _ := s.Candidates(ctx, p.ID, now.AddDate(0, 0, 8), RespectFloor); len(got) != 1 {
 		t.Error("a weekly reminder was not offered after eight days")
+	}
+}
+
+func TestABudgetIsBoundedOnlyByTheCeiling(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p := testPrincipal(t, s)
+
+	r, err := s.Rhythm(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Rhythm(): %v", err)
+	}
+	if r.Budget != DefaultBudget {
+		t.Errorf("Budget = %d, want the default %d", r.Budget, DefaultBudget)
+	}
+
+	// Nothing about the window bounds it any more: the interval is the waking day over the
+	// budget and is floored at one tick, so there is no second ceiling to keep in agreement
+	// with a planner that no longer exists.
+	r.Budget = MaxBudget
+	if err := s.SetRhythm(ctx, r); err != nil {
+		t.Fatalf("SetRhythm(%d): %v", MaxBudget, err)
+	}
+	r.Budget = MaxBudget + 1
+	if err := s.SetRhythm(ctx, r); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("SetRhythm(%d) = %v, want ErrInvalid", MaxBudget+1, err)
 	}
 }

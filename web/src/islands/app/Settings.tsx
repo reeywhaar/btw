@@ -325,14 +325,11 @@ function RhythmPanel() {
             value={r.budget}
             onChange={(e) => save.mutate({ budget: Number(e.target.value) })}
           >
-            {/* One to whatever fits, not zero to one less.
-                
-                Zero was offered as "none", which is a way of switching nudges off hidden
-                inside a count — and the count itself was short by one, because it divided
-                the window by the gap and that counts gaps rather than nudges.
+            {/* One upwards. Zero was offered as "none", which is a way of switching nudges
+                off hidden inside a count of them.
 
-                The range still stretches to hold a stored value outside it, so a budget set
-                before a window narrowed still renders instead of leaving the control
+                The range still stretches to hold a stored value outside it, so a budget
+                saved before the ceiling moved still renders rather than leaving the control
                 blank. */}
             {Array.from(
               {

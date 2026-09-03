@@ -122,7 +122,7 @@ four tags; a forest over that is furniture.
 ### `rhythm`
 
 ```
-principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, min_gap
+principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, silent
 ```
 
 One row per person, and **a missing row is the defaults rather than an error**. Nothing
@@ -131,7 +131,8 @@ has to be kept in step with them, and this way changing a default changes it for
 who never had an opinion.
 
 `timezone` is an IANA name. `wake_minute` and `sleep_minute` are minutes since local
-midnight. The window must lie inside one local day — night owls want `22:00`–`02:00` and
+midnight. `budget` is not a count but an interval — the waking window divided by it — and
+`silent` asks for a notification without a sound. The window must lie inside one local day — night owls want `22:00`–`02:00` and
 cannot have it yet, because a window crossing midnight means slots belonging to two local
 dates.
 
@@ -145,9 +146,6 @@ Everything that plans or validates goes through `Rhythm.Bounds()`, which answers
 day when there is no window — so "no window" is one answer in one place rather than a
 condition every caller has to remember.
 
-A budget the *effective* window cannot hold at that spacing is refused with a sentence naming
-the most it will take, so six a day is refused into a two-hour window and accepted once the
-window is off. Accepting eight and silently delivering six is worse than saying the window is too
 short.
 
 ### `devices`
@@ -228,24 +226,22 @@ Worth being honest that sessions are not where the churn is; `last_seen_at` move
 once an hour per session. They are here because they are disposable, which is the only test
 this seam applies.
 
-### `slots`
+### `pending_nudge`
 
 ```
-principal_id, local_date, idx, at, fired_at    primary key (principal_id, local_date, idx)
+principal_id, at    primary key (principal_id)
 ```
 
-A day's plan: which minutes a person is due to be nudged at. Stored because a restart that
-re-rolled the day could fire a slot twice or lose an afternoon.
+One row per person, and only while a nudge has been decided on and not yet sent. The loop
+asks every five minutes whether somebody is owed one; firing where the answer turns yes would
+put every nudge on a tick boundary, so the answer schedules one a random moment later and the
+loop leaves it alone while it stands.
 
-**Never shown.** A person who can see that the next nudge is at 14:32 is a person waiting for
-14:32, and the surprise is the entire mechanism. No endpoint returns these, and a test
-asserts the rhythm endpoint leaks no scheduling detail.
+This replaced a `slots` table holding a whole day of instants drawn in advance. See
+[nudges.md](nudges.md#what-this-replaced) for why the promise it existed to keep was not
+worth its machinery.
 
-`local_date` is the person's own date, which is what makes the plan one per waking day rather
-than one per rotation of the earth measured from Greenwich.
-
-Claiming a slot is the `UPDATE ... WHERE fired_at IS NULL` itself rather than a note made
-after deciding to claim, so two overlapping passes cannot both send for one slot.
+Claiming is the `DELETE`, so two overlapping ticks cannot both send the same one.
 
 ### `nudges`
 
