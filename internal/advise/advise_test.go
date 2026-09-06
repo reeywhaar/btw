@@ -516,3 +516,114 @@ func TestAnUndeliveredAlertIsSentAgain(t *testing.T) {
 		t.Errorf("tried %d times, want an undelivered message tried again", len(sent.sent))
 	}
 }
+
+// Stale advice is worth more than none. A model that mangles one reminder out of forty used to
+// cost that reminder everything it had, leaving it weighed at exactly 1 until some later round
+// happened to get it right.
+func TestAnAnswerThatCouldNotBeReadKeepsTheOneBeforeIt(t *testing.T) {
+	g := &gateway{}
+	g.start(t)
+
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	kept, _ := st.CreateReminder(ctx, p.ID, "wash dishes")
+	fresh, _ := st.CreateReminder(ctx, p.ID, "go to circus")
+
+	good := `[{"days":"all","from":"20:00","to":"23:00","v":0.9}]`
+	g.reply = `{"results":[
+		{"id":"` + kept.ID + `","curve":` + good + `},
+		{"id":"` + fresh.ID + `","curve":` + good + `}
+	]}`
+	adviser(st).Once(ctx)
+
+	weights := func() map[string]float64 {
+		got, err := st.Candidates(ctx, p.ID, st.Now(), store.IgnoreFloor)
+		if err != nil {
+			t.Fatalf("Candidates(): %v", err)
+		}
+		out := map[string]float64{}
+		for _, c := range got {
+			v, ok := c.Curve.At(0, 21*60)
+			if !ok {
+				t.Fatalf("%q has no readable curve", c.Text)
+			}
+			out[c.ID] = v
+		}
+		return out
+	}
+	if w := weights(); w[kept.ID] != 0.9 || w[fresh.ID] != 0.9 {
+		t.Fatalf("first round = %v, want both answered", w)
+	}
+
+	// The next round mangles one and moves the other. This is the shape actually seen: a span
+	// list nothing could read, beside one that was fine.
+	st.MarkAdviceStale(ctx, p.ID)
+	g.reply = `{"results":[
+		{"id":"` + kept.ID + `","curve":[{"nonsense":true}]},
+		{"id":"` + fresh.ID + `","curve":[{"days":"all","from":"09:00","to":"11:00","v":0.2}]}
+	]}`
+	adviser(st).Once(ctx)
+
+	w := weights()
+	if w[kept.ID] != 0.9 {
+		t.Errorf("the mangled one = %v at 21:00, want the answer before it kept", w[kept.ID])
+	}
+	if w[fresh.ID] != neutral {
+		t.Errorf("the moved one = %v at 21:00, want its new answer to have replaced the old", w[fresh.ID])
+	}
+}
+
+// The distinction the carrying-forward hangs on. A model that deliberately says "no shape" has
+// to overwrite; only an answer that failed or never arrived is kept.
+func TestADeliberateNoOpinionStillReplacesWhatCameBefore(t *testing.T) {
+	g := &gateway{}
+	g.start(t)
+
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	rem, _ := st.CreateReminder(ctx, p.ID, "wash dishes")
+
+	g.reply = `{"results":[{"id":"` + rem.ID + `","curve":[{"days":"all","from":"20:00","to":"23:00","v":0.9}]}]}`
+	adviser(st).Once(ctx)
+
+	st.MarkAdviceStale(ctx, p.ID)
+	g.reply = `{"results":[{"id":"` + rem.ID + `","curve":[]}]}`
+	adviser(st).Once(ctx)
+
+	got, _ := st.Candidates(ctx, p.ID, st.Now(), store.IgnoreFloor)
+	if v, _ := got[0].Curve.At(0, 21*60); v != neutral {
+		t.Errorf("weight = %v, want an explicit empty answer to have replaced the old one", v)
+	}
+}
+
+// A reminder the model omitted entirely is the same case: its advice was not withdrawn, the
+// answer simply did not mention it.
+func TestAReminderLeftOutOfTheAnswerKeepsWhatItHad(t *testing.T) {
+	g := &gateway{}
+	g.start(t)
+
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	rem, _ := st.CreateReminder(ctx, p.ID, "wash dishes")
+
+	g.reply = `{"results":[{"id":"` + rem.ID + `","curve":[{"days":"all","from":"20:00","to":"23:00","v":0.9}]}]}`
+	adviser(st).Once(ctx)
+
+	st.MarkAdviceStale(ctx, p.ID)
+	g.reply = `{"results":[]}`
+	adviser(st).Once(ctx)
+
+	got, _ := st.Candidates(ctx, p.ID, st.Now(), store.IgnoreFloor)
+	if !got[0].Advised {
+		t.Fatal("being left out of one answer lost the reminder its advice")
+	}
+	if v, _ := got[0].Curve.At(0, 21*60); v != 0.9 {
+		t.Errorf("weight = %v, want the answer before it kept", v)
+	}
+}

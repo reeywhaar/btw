@@ -222,6 +222,37 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	}
 
 	advice, dropped, misshapen := parse(reply, known)
+
+	// What a round could not read is not thrown away — the answer before it stands.
+	//
+	// A model that mangles one reminder out of forty used to cost that reminder everything it
+	// had, leaving it weighed at exactly 1 until some later round happened to get it right.
+	// Stale advice is worth more than none: it was true when it was written, and the reminder
+	// it is about did not change — the *answer* failed, not the question.
+	//
+	// A deliberate "no shape" still overwrites, because an empty list of spans reads as a
+	// whole week of neutrals rather than as a failure. So the only thing carried forward is an
+	// answer that could not be understood or did not arrive.
+	previous, err := a.Store.AdviceFor(ctx, ids)
+	if err != nil {
+		return err
+	}
+	carried := 0
+	for id, old := range previous {
+		if !old.Curve.Valid() {
+			continue
+		}
+		fresh, answered := advice[id]
+		if answered && fresh.Curve.Valid() {
+			continue
+		}
+		// Whatever this round did manage to say about it is kept — the categories may be
+		// readable when the curve is not — and only the curve comes from before.
+		fresh.Curve = old.Curve
+		advice[id] = fresh
+		carried++
+	}
+
 	if err := a.Store.SetAdvice(ctx, ids, advice); err != nil {
 		return err
 	}
@@ -233,6 +264,7 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	// the nudge log follows, and for the same reason. The counts are what an operator needs.
 	a.Log.Info("advised", "principal", principalID, "model", res.Model,
 		"reminders", len(reminders), "answered", len(advice), "dropped", dropped,
+		"carried", carried,
 		// The shapes and not the answers: "7x24" says what to change about the question, and
 		// says nothing about anybody's reminders.
 		"misshapen", misshapen, "tokens", res.Tokens)

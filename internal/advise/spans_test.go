@@ -195,3 +195,74 @@ func TestAnArrayOfNumbersStillReads(t *testing.T) {
 		t.Errorf("value = %v, want 0.7", v)
 	}
 }
+
+// A model told to write "from" writes "start" often enough to matter, and the two failures
+// that causes are not equally visible. A missing "from" was refused and showed on screen; a
+// weight written as "value" read as the zero value — a span meant as 0.9 became 0.0 and was
+// drawn as a confident graph saying the opposite. The silent one is why aliases exist.
+func TestASpanIsReadWhicheverNamesItUsed(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"as asked", `[{"days":"all","from":"20:00","to":"23:00","v":0.9}]`},
+		{"start and end", `[{"days":"all","start":"20:00","end":"23:00","v":0.9}]`},
+		{"begin and until", `[{"days":"all","begin":"20:00","until":"23:00","v":0.9}]`},
+		{"value", `[{"days":"all","from":"20:00","to":"23:00","value":0.9}]`},
+		{"weight", `[{"days":"all","from":"20:00","to":"23:00","weight":0.9}]`},
+		{"score", `[{"days":"all","from":"20:00","to":"23:00","score":0.9}]`},
+		{"day, singular", `[{"day":"all","from":"20:00","to":"23:00","v":0.9}]`},
+		{"a number written as a string", `[{"days":"all","from":"20:00","to":"23:00","v":"0.9"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, misshapen := parse(spans(tc.body), known("r_1"))
+			c := got["r_1"].Curve
+			if !c.Valid() {
+				t.Fatalf("curve = %+v, misshapen %v, want it read", c, misshapen)
+			}
+			if v, _ := c.At(0, 21*60); v != 0.9 {
+				t.Errorf("weight = %v, want 0.9 — a name it did not know became a zero", v)
+			}
+		})
+	}
+}
+
+// Zero is not an absence. It is the strongest opinion the scale holds, and the wrong one, so a
+// span whose weight cannot be read is dropped rather than taken as none.
+func TestASpanWithNoReadableWeightIsDroppedRatherThanZeroed(t *testing.T) {
+	got, _, _ := parse(spans(`[
+		{"days":"all","from":"20:00","to":"23:00"},
+		{"days":"all","from":"09:00","to":"11:00","v":"not a number"},
+		{"days":"all","from":"13:00","to":"15:00","v":0.8}
+	]`), known("r_1"))
+	c := got["r_1"].Curve
+
+	for _, tc := range []struct {
+		name   string
+		minute int
+		want   float64
+	}{
+		{"the span with no weight at all", 21 * 60, neutral},
+		{"the span with an unreadable one", 10 * 60, neutral},
+		{"the one that was fine", 14 * 60, 0.8},
+	} {
+		if v, _ := c.At(0, tc.minute); v != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, v, tc.want)
+		}
+	}
+}
+
+// An empty list is a real answer, and the distinction the carrying-forward hangs on: a model
+// deliberately saying "no shape" has to overwrite what came before, where one that failed to
+// answer must not.
+func TestAnEmptyListIsAWeekOfNoOpinion(t *testing.T) {
+	got, _, misshapen := parse(spans(`[]`), known("r_1"))
+	c := got["r_1"].Curve
+	if !c.Valid() {
+		t.Fatalf("curve = %+v, misshapen %v, want an empty list to be an answer", c, misshapen)
+	}
+	for d := range store.Days {
+		for i := range store.Windows {
+			if v, _ := c.At(d, i*store.WindowMinutes); v != neutral {
+				t.Fatalf("day %d window %d = %v, want neutral throughout", d, i, v)
+			}
+		}
+	}
+}

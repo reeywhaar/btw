@@ -25,10 +25,91 @@ import (
 //
 // Everything downstream still reads a 7×48 [store.Curve]; spans are expanded into one here.
 type span struct {
-	Days string  `json:"days"`
-	From string  `json:"from"`
-	To   string  `json:"to"`
-	V    float64 `json:"v"`
+	Days string
+	From string
+	To   string
+	V    float64
+}
+
+// Field names a model reaches for, in the order they are looked up.
+//
+// **Aliases, not tidiness.** A model told to write "from" writes "start" often enough to
+// matter, and the two failures that causes are not equally visible: a missing "from" was
+// refused outright and showed on screen, while a weight written as "value" read as the zero
+// value — a span the model meant as 0.9 became 0.0, drawn as a confident graph saying the
+// opposite of what it said. The silent one is why this list exists.
+var (
+	dayKeys    = []string{"days", "day"}
+	fromKeys   = []string{"from", "start", "begin", "after"}
+	toKeys     = []string{"to", "end", "until", "till", "before"}
+	weightKeys = []string{"v", "value", "weight", "score", "confidence"}
+)
+
+// spanFrom reads one span out of an object, whichever names it used.
+//
+// The weight is the one field with no default. A span whose weight cannot be read is dropped
+// rather than taken as zero, because zero is not an absence — it is the strongest opinion the
+// scale can hold, and the wrong one.
+func spanFrom(row map[string]json.RawMessage) (span, bool) {
+	pick := func(names []string) (json.RawMessage, bool) {
+		for _, name := range names {
+			if raw, ok := row[name]; ok {
+				return raw, true
+			}
+		}
+		return nil, false
+	}
+	text := func(names []string) string {
+		raw, ok := pick(names)
+		if !ok {
+			return ""
+		}
+		var out string
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return ""
+		}
+		return out
+	}
+
+	raw, ok := pick(weightKeys)
+	if !ok {
+		return span{}, false
+	}
+	var v float64
+	if err := json.Unmarshal(raw, &v); err != nil {
+		// Written as a string, which models do. "0.9" is the same answer as 0.9.
+		var asText string
+		if json.Unmarshal(raw, &asText) != nil {
+			return span{}, false
+		}
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(asText), 64)
+		if err != nil {
+			return span{}, false
+		}
+		v = parsed
+	}
+
+	return span{
+		Days: text(dayKeys),
+		From: text(fromKeys),
+		To:   text(toKeys),
+		V:    v,
+	}, true
+}
+
+// neutral is the middle of the scale: no opinion, and a multiplier of exactly 1.
+const neutral = 0.5
+
+// neutralWeek is a week with no opinion anywhere.
+func neutralWeek() store.Curve {
+	week := make(store.Curve, store.Days)
+	for d := range week {
+		week[d] = make([]float64, store.Windows)
+		for i := range week[d] {
+			week[d][i] = neutral
+		}
+	}
+	return week
 }
 
 // spansToCurve expands a list of spans into a week, or reports nil when it is not a list of
@@ -42,33 +123,22 @@ func spansToCurve(raw json.RawMessage) (store.Curve, bool) {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, false
 	}
-	// An empty list is a real answer — no opinion anywhere — but it is indistinguishable from
-	// an empty array of numbers, so it is left to the caller's other readings first.
+	// An empty list is a real answer and a common one: no opinion anywhere. It reads the same
+	// as an empty array of numbers would, and both mean the same thing, so there is nothing to
+	// tell apart — and answering neutral rather than refusing is what lets a deliberate "no
+	// shape" overwrite an older answer instead of being carried forward as a failure.
 	if len(rows) == 0 {
-		return nil, false
-	}
-	if _, ok := rows[0]["from"]; !ok {
-		return nil, false
+		return neutralWeek(), true
 	}
 
 	// Neutral everywhere, then painted over. Unmentioned means no opinion, which is what makes
 	// a single line a complete answer.
-	week := make(store.Curve, store.Days)
-	for d := range week {
-		week[d] = make([]float64, store.Windows)
-		for i := range week[d] {
-			week[d][i] = neutral
-		}
-	}
+	week := neutralWeek()
 
 	painted := false
 	for _, row := range rows {
-		var s span
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			continue
-		}
-		if err := json.Unmarshal(encoded, &s); err != nil {
+		s, ok := spanFrom(row)
+		if !ok {
 			continue
 		}
 		if paint(week, s) {
@@ -79,9 +149,6 @@ func spansToCurve(raw json.RawMessage) (store.Curve, bool) {
 	// answer that failed, and saying so is what gets the shape into the log.
 	return week, painted
 }
-
-// neutral is the middle of the scale: no opinion, and a multiplier of exactly 1.
-const neutral = 0.5
 
 // paint applies one span, and reports whether it could be read at all.
 func paint(week store.Curve, s span) bool {

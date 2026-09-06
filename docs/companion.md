@@ -211,6 +211,35 @@ before its `from` runs past midnight. An absent `days` means every day, because 
 one line about an evening means every evening and refusing it over a missing field would refuse
 the commonest answer.
 
+**Every field has aliases** — `start`/`end` beside `from`/`to`, `value`/`weight`/`score` beside
+`v` — and that is not tidiness. A model told to write `from` writes `start` often enough to
+matter, and the two failures that causes are not equally visible: a missing `from` was refused
+outright and said so on screen, while a weight written as `value` read as **the zero value**. A
+span the model meant as 0.9 became 0.0 and was drawn as a confident graph saying the opposite.
+The silent one is the reason the aliases exist, and why a span whose weight cannot be read is
+dropped rather than taken as zero: zero is not an absence, it is the strongest opinion on the
+scale and the wrong one.
+
+**An empty list is a real answer** — no opinion anywhere — and not a failure. That distinction
+carries more weight than it looks, because of what happens to a round that fails.
+
+### What one round cannot read, the round before it keeps
+
+A model that mangles one reminder out of forty used to cost that reminder everything it had,
+leaving it weighed at exactly 1 until some later round happened to get it right. Stale advice is
+worth more than none: it was true when it was written, and the reminder it is about did not
+change — the *answer* failed, not the question.
+
+So an entry whose curve could not be read, or that never arrived, keeps the curve it had.
+Whatever the round *did* manage to say about it is still taken, since the categories can be
+readable when the curve is not; only the curve comes from before.
+
+A deliberate "no shape" still overwrites, because an empty list of spans reads as a whole week
+of neutrals rather than as a failure. That is the whole of the distinction: **the only thing
+carried forward is an answer that could not be understood or did not come.**
+
+A pass says how many it carried, beside how many it answered and dropped.
+
 **The array shapes are still read**, because a model answers the question it expected at least
 as often as the one it was given:
 
