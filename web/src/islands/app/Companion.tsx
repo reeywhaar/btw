@@ -57,7 +57,14 @@ export function Companion() {
           <>
             <Field
               label="Model"
-              control={<span className="text-sm text-muted">{c.model}</span>}
+              control={
+                <span className="text-sm text-muted">
+                  {/* What will actually be asked, and whether it was chosen. An account that
+                      picked nothing follows the default wherever it goes, and showing the
+                      name alone would read as a choice it never made. */}
+                  {c.model || `${c.default_model} · default`}
+                </span>
+              }
             />
             <Field
               label="About you"
@@ -239,7 +246,10 @@ function CompanionDialog({
     if (!open) return;
     setForm({
       api_key: "",
-      model: current.configured ? current.model : "",
+      // The stored value, blank included. It used to be blank only before the first save,
+      // because the default was written into the row — so reopening this handed back a model
+      // name nobody had typed, and saving again pinned it.
+      model: current.model,
       about: current.about,
     });
     // And whatever the last press said, which was about values this dialog no longer holds.
@@ -307,7 +317,7 @@ function CompanionDialog({
         placeholder={current.default_model}
         autoCapitalize="none"
         autoComplete="off"
-        hint="Empty means the default, which is free."
+        hint="Leave it empty to follow the default, which is free and may change."
         value={form.model}
         onChange={(e) => set("model", e.target.value)}
       />

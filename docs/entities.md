@@ -203,8 +203,15 @@ so forgetting an account forgets its key with it.
 a reversible scramble would only make it look protected. It is never sent back out — the API
 carries `key_set` instead.
 
-`model` is never empty. A save that names none stores the default rather than a blank, so every
-row holds the model it will actually be asked with and no reader has to know the fallback.
+`model` is **empty when nobody chose one**, and that is a state rather than a gap: it means
+"whatever the default is now". It used to be filled in on the way into the row so that every
+row named the model it would be asked with, which was wrong twice over. An account was pinned
+to whatever the default happened to be on the day it first saved, and the form came back with a
+model name where somebody had left a blank — so their next save picked, on their behalf,
+something they never typed.
+
+The fallback is resolved at the moment of asking, by `Settings.ModelOrDefault`. A model somebody
+did type is kept whether or not it equals the default, because typing it is a choice.
 
 `about` is bounded at 2,000 runes, counted in runes rather than bytes because a paragraph is
 not four times as long for being written in a four-byte script. The bound is a token bill as

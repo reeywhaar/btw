@@ -53,9 +53,11 @@ func (s *Store) SetCompanion(ctx context.Context, principalID string, set openro
 	// The shape of the key is not checked, deliberately. A prefix rule would refuse a valid
 	// key the day OpenRouter changes the format, and the only thing that actually settles
 	// whether a key works is using it — which is what the test button is for.
-	if set.Model == "" {
-		set.Model = openrouter.DefaultModel
-	}
+	//
+	// An empty model is stored empty. Filling in the default here was the tempting thing and
+	// was wrong twice: it pinned an account to whatever the default was on the day it first
+	// saved, and it handed the form back a model name where somebody had left a blank — so
+	// the next save chose, on their behalf, something they never picked.
 
 	_, err := s.main.ExecContext(ctx,
 		`INSERT INTO companion (principal_id, api_key, model, about, updated_at)

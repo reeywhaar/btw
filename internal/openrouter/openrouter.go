@@ -71,7 +71,16 @@ func SetEndpoint(u string) func() {
 // Settings are the companion as somebody configured it. Carries the key.
 type Settings struct {
 	APIKey string
-	Model  string
+
+	// Model is what the account chose, or empty for whatever the default is now.
+	//
+	// **Empty is a state, not a gap.** It was filled in with [DefaultModel] on the way into
+	// the database, which made "I have not chosen" and "I chose minimax/minimax-m3:free" the
+	// same row — so the first save silently pinned an account to today's default, and the
+	// field somebody had left blank came back with a model name in it. Resolved here instead,
+	// at the moment of asking, so an account that never chose follows the default wherever it
+	// goes.
+	Model string
 
 	// About is what the model is told about the person, in their own words.
 	//
@@ -80,6 +89,14 @@ type Settings struct {
 	// and nothing else in btw records that — a rhythm's waking window says which hours are
 	// allowed, never which are wanted.
 	About string
+}
+
+// ModelOrDefault is the model to actually ask, which is the chosen one or the default.
+func (s Settings) ModelOrDefault() string {
+	if s.Model == "" {
+		return DefaultModel
+	}
+	return s.Model
 }
 
 // Configured reports whether there is a companion to ask at all.
@@ -125,7 +142,7 @@ func Check(ctx context.Context, set Settings, via proxy.Settings) (Result, error
 	}
 
 	body := map[string]any{
-		"model": set.Model,
+		"model": set.ModelOrDefault(),
 		// Small on purpose. This asks whether the gateway answers, not whether it answers
 		// well, and a reasoning model's thinking counts against the same ceiling — so it is
 		// generous enough that the reply is not cut off before it starts.
@@ -152,7 +169,7 @@ func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user str
 	}
 
 	body := map[string]any{
-		"model":      set.Model,
+		"model":      set.ModelOrDefault(),
 		"max_tokens": maxTokens,
 		// A reasoning model otherwise leaks its thinking into the content, which is the single
 		// likeliest reason a JSON answer fails to parse.

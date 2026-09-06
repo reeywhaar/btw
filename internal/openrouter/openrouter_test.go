@@ -196,3 +196,33 @@ func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 		t.Error("a rejected key was reported as a rate limit")
 	}
 }
+
+// An account that never chose a model follows the default wherever it goes, and the resolving
+// happens here rather than in the row — so the question asked names a model even when nothing
+// was written down.
+func TestAnUnchosenModelIsResolvedWhenItIsAsked(t *testing.T) {
+	var asked string
+	serve(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		asked = body.Model
+		ok(w, `{"model":"m","choices":[{"message":{"content":"ok"}}]}`)
+	})
+
+	if _, err := Check(t.Context(), Settings{APIKey: "k"}, direct); err != nil {
+		t.Fatalf("Check(): %v", err)
+	}
+	if asked != DefaultModel {
+		t.Errorf("asked %q, want %q — an empty model must not reach the gateway", asked, DefaultModel)
+	}
+
+	// And one that was chosen is the one asked for.
+	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3"}, direct); err != nil {
+		t.Fatalf("Check(): %v", err)
+	}
+	if asked != "minimax/minimax-m3" {
+		t.Errorf("asked %q, want the chosen one", asked)
+	}
+}

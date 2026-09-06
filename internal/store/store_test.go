@@ -655,7 +655,7 @@ func TestABudgetIsBoundedOnlyByTheCeiling(t *testing.T) {
 	}
 }
 
-func TestACompanionNeedsAKeyAndFallsBackToTheDefaultModel(t *testing.T) {
+func TestACompanionNeedsAKey(t *testing.T) {
 	s := testStore(t)
 	p := testPrincipal(t, s)
 	ctx := context.Background()
@@ -664,8 +664,6 @@ func TestACompanionNeedsAKeyAndFallsBackToTheDefaultModel(t *testing.T) {
 		t.Errorf("SetCompanion(no key) = %v, want ErrInvalid", err)
 	}
 
-	// A model nobody named is the default rather than an empty string, so every row holds
-	// the model it will actually be asked with.
 	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "  sk-or-v1-abc  "}); err != nil {
 		t.Fatalf("SetCompanion(): %v", err)
 	}
@@ -673,11 +671,52 @@ func TestACompanionNeedsAKeyAndFallsBackToTheDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Companion(): %v", err)
 	}
-	if got.Model != openrouter.DefaultModel {
-		t.Errorf("Model = %q, want %q", got.Model, openrouter.DefaultModel)
-	}
 	if got.APIKey != "sk-or-v1-abc" {
 		t.Errorf("APIKey = %q, want it trimmed", got.APIKey)
+	}
+}
+
+// "I have not chosen a model" and "I chose minimax/minimax-m3:free" are different answers, and
+// storing the default made them the same row. Two things went wrong with that: an account was
+// pinned to whatever the default was on the day it first saved, and the form came back with a
+// model name where somebody had left a blank — so the next save picked, on their behalf,
+// something they never typed.
+func TestAModelNobodyChoseStaysUnchosen(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"}); err != nil {
+		t.Fatalf("SetCompanion(): %v", err)
+	}
+	got, err := s.Companion(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if got.Model != "" {
+		t.Errorf("Model = %q, want it left unchosen", got.Model)
+	}
+	// And it is still the default that gets asked, resolved at the moment of asking rather
+	// than written down.
+	if got.ModelOrDefault() != openrouter.DefaultModel {
+		t.Errorf("ModelOrDefault() = %q, want %q", got.ModelOrDefault(), openrouter.DefaultModel)
+	}
+
+	// Saving again does not turn the blank into a choice, which is the loop that pinned it.
+	if err := s.SetCompanion(ctx, p.ID, got); err != nil {
+		t.Fatalf("SetCompanion(again): %v", err)
+	}
+	if again, _ := s.Companion(ctx, p.ID); again.Model != "" {
+		t.Errorf("Model = %q after saving what was read back, want it still unchosen", again.Model)
+	}
+
+	// A model somebody did type is kept, default or not.
+	chosen := openrouter.Settings{APIKey: "k", Model: openrouter.DefaultModel}
+	if err := s.SetCompanion(ctx, p.ID, chosen); err != nil {
+		t.Fatalf("SetCompanion(chosen): %v", err)
+	}
+	if got, _ := s.Companion(ctx, p.ID); got.Model != openrouter.DefaultModel {
+		t.Errorf("Model = %q, want the one that was typed", got.Model)
 	}
 }
 
