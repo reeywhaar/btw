@@ -304,8 +304,8 @@ function RhythmPanel() {
   if (!rhythm.isSuccess) return null;
   const r = rhythm.data;
 
-  // Offered once, and only when it disagrees: a timezone somebody has already confirmed is
-  // not something to ask about on every visit.
+  // What this browser thinks it is in. The stored zone is shown either way; this only decides
+  // whether there is a correction to offer beside it.
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
@@ -398,19 +398,27 @@ function RhythmPanel() {
         )}
       </Field>
 
-      {r.timezone !== here && (
-        <Field
-          label={`Your hours are set in ${r.timezone}`}
-          control={
-            <Button
-              variant="link"
-              onClick={() => save.mutate({ timezone: here })}
-            >
-              use {here}
-            </Button>
-          }
-        />
-      )}
+      {/* Shown always, not only when it disagrees. It was the second, and a zone nobody had
+          corrected was then invisible — while it decides both which hours a nudge may arrive
+          in and which hours the companion's advice is compared against. The second of those
+          applies even with the window off, so a wrong zone is worth being able to see rather
+          than only worth being offered a fix for. */}
+      <Field
+        label="Timezone"
+        control={
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted">{r.timezone}</span>
+            {r.timezone !== here && (
+              <Button
+                variant="link"
+                onClick={() => save.mutate({ timezone: here })}
+              >
+                use {here}
+              </Button>
+            )}
+          </div>
+        }
+      />
 
       {save.error && (
         <Row>
