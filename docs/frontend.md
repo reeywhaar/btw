@@ -148,7 +148,7 @@ client would mean maintaining two vocabularies for one failure.
 
 Every query key lives in one `qk` object, hierarchically arranged so prefix invalidation is
 correct by construction. `invalidateQueries({ queryKey: ["reminders"] })` catches both the live
-and the finished list without either knowing about the other.
+and the bin without either knowing about the other.
 
 Every read is a server read. There is no client state worth a store: Query owns what came from
 the server, `useState` owns the rest.

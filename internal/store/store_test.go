@@ -185,7 +185,7 @@ func TestEndingAReminderTakesItOutOfTheRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateReminder(): %v", err)
 	}
-	if err := s.EndReminder(ctx, p.ID, r.ID); err != nil {
+	if err := s.BinReminder(ctx, p.ID, r.ID); err != nil {
 		t.Fatalf("EndReminder(): %v", err)
 	}
 	if got, _ := s.Candidates(ctx, p.ID, s.Now(), RespectFloor); len(got) != 0 {
@@ -193,7 +193,7 @@ func TestEndingAReminderTakesItOutOfTheRunning(t *testing.T) {
 	}
 	// Ending twice is not an error: a notification answered after the app already ended it
 	// wanted the same outcome, and it has it.
-	if err := s.EndReminder(ctx, p.ID, r.ID); err != nil {
+	if err := s.BinReminder(ctx, p.ID, r.ID); err != nil {
 		t.Errorf("EndReminder() twice = %v, want nil", err)
 	}
 }
@@ -516,7 +516,7 @@ func TestADoneReminderIsNeverDrawnEitherWay(t *testing.T) {
 	p := testPrincipal(t, s)
 
 	r, _ := s.CreateReminder(ctx, p.ID, "ring the dentist")
-	if err := s.EndReminder(ctx, p.ID, r.ID); err != nil {
+	if err := s.BinReminder(ctx, p.ID, r.ID); err != nil {
 		t.Fatalf("EndReminder(): %v", err)
 	}
 	for _, floor := range []Floor{RespectFloor, IgnoreFloor} {
@@ -1179,5 +1179,85 @@ func TestANightOwlsHoursAreAccepted(t *testing.T) {
 	got, _ := s.Rhythm(ctx, p.ID)
 	if got.WakeMinute != 13*60 || got.SleepMinute != 5*60 {
 		t.Errorf("hours = %d..%d, want them kept", got.WakeMinute, got.SleepMinute)
+	}
+}
+
+// The bin empties itself, and it is the only delete in the program that nobody asked for. What
+// it must not do is reach something still in the list, or something binned this morning.
+func TestTheBinEmptiesItselfAfterThirtyDays(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return now })
+
+	live, err := s.CreateReminder(ctx, p.ID, "still wanted")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	recent, _ := s.CreateReminder(ctx, p.ID, "binned this morning")
+	old, _ := s.CreateReminder(ctx, p.ID, "binned long ago")
+
+	if err := s.BinReminder(ctx, p.ID, recent.ID); err != nil {
+		t.Fatalf("BinReminder(): %v", err)
+	}
+	// Binned a day past the life, by moving the clock rather than the row.
+	s.SetClock(func() time.Time { return now.Add(-BinLife - 24*time.Hour) })
+	if err := s.BinReminder(ctx, p.ID, old.ID); err != nil {
+		t.Fatalf("BinReminder(): %v", err)
+	}
+	s.SetClock(func() time.Time { return now })
+
+	n, err := s.SweepBin(ctx)
+	if err != nil {
+		t.Fatalf("SweepBin(): %v", err)
+	}
+	if n != 1 {
+		t.Errorf("swept %d, want only the one past its thirty days", n)
+	}
+
+	binned, err := s.Reminders(ctx, p.ID, true)
+	if err != nil {
+		t.Fatalf("Reminders(binned): %v", err)
+	}
+	if len(binned) != 1 || binned[0].ID != recent.ID {
+		t.Errorf("bin holds %d, want this morning's kept", len(binned))
+	}
+	open, _ := s.Reminders(ctx, p.ID, false)
+	if len(open) != 1 || open[0].ID != live.ID {
+		t.Errorf("the list holds %d, want the one never binned untouched", len(open))
+	}
+
+	// And an empty bin sweeps to nothing rather than to an error.
+	if n, err := s.SweepBin(ctx); err != nil || n != 0 {
+		t.Errorf("SweepBin() again = %d, %v, want nothing left to do", n, err)
+	}
+}
+
+// Binning is not finishing. Taking something back out has to leave it exactly as it was, since
+// the press it undoes is one somebody made by mistake.
+func TestSomethingTakenBackOutOfTheBinIsWhereItWas(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	rem, err := s.CreateReminder(ctx, p.ID, "water the plants")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	if err := s.BinReminder(ctx, p.ID, rem.ID); err != nil {
+		t.Fatalf("BinReminder(): %v", err)
+	}
+	if got, _ := s.Candidates(ctx, p.ID, s.Now(), IgnoreFloor); len(got) != 0 {
+		t.Error("a binned reminder is still being drawn for")
+	}
+
+	if err := s.RestoreReminder(ctx, p.ID, rem.ID); err != nil {
+		t.Fatalf("RestoreReminder(): %v", err)
+	}
+	got, _ := s.Candidates(ctx, p.ID, s.Now(), IgnoreFloor)
+	if len(got) != 1 || got[0].Text != "water the plants" {
+		t.Errorf("candidates = %+v, want it back in the running", got)
 	}
 }

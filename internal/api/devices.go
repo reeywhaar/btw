@@ -2,10 +2,8 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"btw/internal/ids"
-	"btw/internal/store"
 )
 
 // pushKey is what the browser passes as applicationServerKey when it subscribes.
@@ -122,23 +120,16 @@ func (s *Server) actOnNudge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "that is not a nudge")
 		return
 	}
-	// The last path segment is the verb, so one handler serves both buttons and they
-	// cannot drift apart.
-	action := store.ActionDone
-	if strings.HasSuffix(r.URL.Path, "/"+store.ActionDrop) {
-		action = store.ActionDrop
-	}
-
 	p := principal(r)
-	reminderID, err := s.store.ActOnNudge(r.Context(), p.ID, id, action)
+	reminderID, err := s.store.ActOnNudge(r.Context(), p.ID, id)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if err := s.store.EndReminder(r.Context(), p.ID, reminderID); err != nil {
+	if err := s.store.BinReminder(r.Context(), p.ID, reminderID); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("nudge answered", "principal", p.ID, "nudge", id, "action", action)
+	s.log.Info("nudge answered", "principal", p.ID, "nudge", id)
 	w.WriteHeader(http.StatusNoContent)
 }

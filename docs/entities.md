@@ -71,14 +71,18 @@ on one link produce one account and one refusal rather than two accounts.
 ### `reminders`
 
 ```
-id, principal_id, text, note, min_interval, priority, created_at, done_at, last_nudged_at
+id, principal_id, text, note, min_interval, priority, created_at, binned_at, last_nudged_at
 ```
 
-**`done_at` is the only thing that ever ends a reminder, and only a person sets it.** Until
-then it keeps coming: not fading with age, not stopping because it has been ignored twenty
-times, not expiring because a date went past. There is no completed-at separate from an
-archived-at, no history to browse, and no recurring/one-shot distinction to configure — a
-one-off is one you end when you have done it, a standing one is one you never end.
+**`binned_at` is the only thing that ever takes a reminder out of the running, and only a
+person sets it.** Until then it keeps coming: not fading with age, not stopping because it has
+been ignored twenty times, not expiring because a date went past. There is no completed-at
+separate from an archived-at, no history to browse, and no recurring/one-shot distinction to
+configure — a one-off is one you bin when you are finished with it, a standing one is one you
+never bin.
+
+Thirty days in the bin and the row is deleted outright, which is the only delete here that
+happens without somebody asking. See [conventions.md](conventions.md#the-bin-is-a-place-not-a-state).
 
 **`min_interval` is one number doing two jobs**, which is why it earns a column. It is a hard
 floor — a reminder inside its interval cannot be drawn at all — and it is the denominator that
@@ -113,7 +117,7 @@ the push payload — a notification carries the sentence alone.
 added now is a line in the first migration and a column added later is a migration, a
 backfill and a release.
 
-`reminders_live` is a partial index on `principal_id WHERE done_at IS NULL`, because every
+`reminders_live` is a partial index on `principal_id WHERE binned_at IS NULL`, because every
 query that matters asks for the live ones.
 
 ### `tags`, `reminder_tags`
@@ -369,10 +373,12 @@ Claiming is the `DELETE`, so two overlapping ticks cannot both send the same one
 ### `nudges`
 
 ```
-id, principal_id, reminder_id, sent_at, acted_at, action
+id, principal_id, reminder_id, sent_at, acted_at
 ```
 
-`action` is `done` or `drop`, and this is the only place that distinction is kept.
+`acted_at` says whether a nudge was answered, and there is nothing recording *how* — there is
+one way now. The column that held `done` or `drop` was the only place that distinction survived
+and nothing ever read it, so it went with the second button.
 
 **A row exists only if something actually reached a push service.** The id is minted before
 sending — it has to travel inside the encrypted payload, because the notification's buttons

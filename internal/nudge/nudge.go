@@ -336,4 +336,11 @@ func (s *Scheduler) sweep(ctx context.Context) {
 	} else if n > 0 {
 		s.log.Debug("swept sessions", "count", n)
 	}
+	// The bin, on the same tick. Thirty days is not a deadline anybody is watching, so it
+	// wants no clock of its own — it wants to happen eventually, which is what this is.
+	if n, err := s.store.SweepBin(ctx); err != nil {
+		s.log.Error("could not sweep the bin", "err", err)
+	} else if n > 0 {
+		s.log.Info("emptied from the bin", "count", n)
+	}
 }

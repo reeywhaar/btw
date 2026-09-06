@@ -83,6 +83,7 @@ var Main = []Migration{
 	mainCompanion,
 	mainProxy,
 	mainRhythmWrappingWindow,
+	mainReminderBin,
 }
 
 // Derived owns what the running process accumulated: sessions, the nudge waiting to go out,
@@ -97,4 +98,5 @@ var Derived = []Migration{
 	derivedAdviceLimited,
 	derivedAdviceAlerted,
 	derivedAdviceBody,
+	derivedNudgeAction,
 }

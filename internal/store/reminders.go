@@ -42,12 +42,12 @@ type Reminder struct {
 	MinInterval  time.Duration
 	Priority     int
 	CreatedAt    time.Time
-	DoneAt       time.Time
+	BinnedAt     time.Time
 	LastNudgedAt time.Time
 }
 
 // Done reports whether a person has ended this reminder, by doing it or by dropping it.
-func (r Reminder) Done() bool { return !r.DoneAt.IsZero() }
+func (r Reminder) Done() bool { return !r.BinnedAt.IsZero() }
 
 // CreateReminder writes one down. Text is the only thing asked for; everything else has a
 // default that is deliberately invisible.
@@ -111,12 +111,12 @@ func (s *Store) UpdateReminder(ctx context.Context, principalID, id, text, note 
 // Live ones and ended ones are separate calls rather than one call with a filter, because
 // they are two different screens and the ended list is the one nobody looks at.
 func (s *Store) Reminders(ctx context.Context, principalID string, done bool) ([]Reminder, error) {
-	clause := "done_at IS NULL"
+	clause := "binned_at IS NULL"
 	if done {
-		clause = "done_at IS NOT NULL"
+		clause = "binned_at IS NOT NULL"
 	}
 	rows, err := s.main.QueryContext(ctx,
-		`SELECT id, principal_id, text, note, min_interval, priority, created_at, done_at, last_nudged_at
+		`SELECT id, principal_id, text, note, min_interval, priority, created_at, binned_at, last_nudged_at
 		   FROM reminders WHERE principal_id = ? AND `+clause+`
 		  ORDER BY id DESC`, principalID)
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *Store) Reminders(ctx context.Context, principalID string, done bool) ([
 // business either way, and scoping the lookup and checking the owner become one operation.
 func (s *Store) Reminder(ctx context.Context, principalID, id string) (Reminder, error) {
 	row := s.main.QueryRowContext(ctx,
-		`SELECT id, principal_id, text, note, min_interval, priority, created_at, done_at, last_nudged_at
+		`SELECT id, principal_id, text, note, min_interval, priority, created_at, binned_at, last_nudged_at
 		   FROM reminders WHERE id = ? AND principal_id = ?`, id, principalID)
 	r, err := scanReminder(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -149,29 +149,31 @@ func (s *Store) Reminder(ctx context.Context, principalID, id string) (Reminder,
 	return r, err
 }
 
-// EndReminder marks one done. Whether the button said Done or Drop is recorded on the
-// nudge that was answered, not here — nothing in the program reads the distinction back,
-// and a column nothing reads is a column that goes stale.
-func (s *Store) EndReminder(ctx context.Context, principalID, id string) error {
+// BinReminder puts one in the bin.
+//
+// One gesture, where there were two. *Done* and *drop* were a to-do list's words, and btw is
+// not one: the second existed only so that ending something never started did not require
+// claiming otherwise. A bin claims nothing either way, so one covers both honestly.
+func (s *Store) BinReminder(ctx context.Context, principalID, id string) error {
 	res, err := s.main.ExecContext(ctx,
-		`UPDATE reminders SET done_at = ? WHERE id = ? AND principal_id = ? AND done_at IS NULL`,
+		`UPDATE reminders SET binned_at = ? WHERE id = ? AND principal_id = ? AND binned_at IS NULL`,
 		unix(s.Now()), id, principalID)
 	if err != nil {
-		return fmt.Errorf("end reminder: %w", err)
+		return fmt.Errorf("bin reminder: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		// Already ended is not an error. Pressing Done on a notification that has been
-		// sitting on a lock screen since yesterday, after ending the thing in the app,
-		// should not produce a failure — the caller wanted it ended and it is ended.
+		// Already binned is not an error. Pressing it on a notification that has been sitting
+		// on a lock screen since yesterday, after binning the thing in the app, should not
+		// produce a failure — the caller wanted it gone and it is gone.
 		return s.assertReminderExists(ctx, principalID, id)
 	}
 	return nil
 }
 
-// ReviveReminder undoes an ending, for the one that was pressed by mistake.
-func (s *Store) ReviveReminder(ctx context.Context, principalID, id string) error {
+// RestoreReminder takes one back out of the bin, for the press that was a mistake.
+func (s *Store) RestoreReminder(ctx context.Context, principalID, id string) error {
 	res, err := s.main.ExecContext(ctx,
-		`UPDATE reminders SET done_at = NULL WHERE id = ? AND principal_id = ?`, id, principalID)
+		`UPDATE reminders SET binned_at = NULL WHERE id = ? AND principal_id = ?`, id, principalID)
 	if err != nil {
 		return fmt.Errorf("revive reminder: %w", err)
 	}
@@ -260,7 +262,34 @@ func scanReminder(sc scanner) (Reminder, error) {
 	}
 	r.MinInterval = time.Duration(interval) * time.Second
 	r.CreatedAt = time.Unix(cre, 0).UTC()
-	r.DoneAt = timeFrom(done)
+	r.BinnedAt = timeFrom(done)
 	r.LastNudgedAt = timeFrom(nudged)
 	return r, nil
+}
+
+// BinLife is how long a reminder stays in the bin before it is gone for good.
+//
+// Long enough that somebody who binned the wrong thing and noticed a fortnight later can still
+// have it back, and short enough that the bin is a bin rather than a second list of everything
+// they ever wrote. Nothing surfaces the deadline: a countdown beside a row somebody has already
+// finished with is exactly the kind of number this product exists not to show.
+const BinLife = 30 * 24 * time.Hour
+
+// SweepBin deletes what has been in the bin longer than [BinLife], and reports how many.
+//
+// A hard delete, and the only one that happens without somebody asking. It takes the advice
+// with it — the row is gone, so what a companion thought about it is garbage — and leaves the
+// nudges that carried it, which are a log of what was sent rather than of what still exists.
+func (s *Store) SweepBin(ctx context.Context) (int, error) {
+	cutoff := unix(s.Now().Add(-BinLife))
+	res, err := s.main.ExecContext(ctx,
+		`DELETE FROM reminders WHERE binned_at IS NOT NULL AND binned_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("sweep bin: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil
+	}
+	return int(n), nil
 }

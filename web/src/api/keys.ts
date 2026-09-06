@@ -2,7 +2,7 @@
 // correct by construction rather than by everybody remembering the same string.
 export const qk = {
   me: ["me"] as const,
-  reminders: (done: boolean) => ["reminders", done] as const,
+  reminders: (binned: boolean) => ["reminders", binned] as const,
   rhythm: ["rhythm"] as const,
   devices: ["devices"] as const,
   recovery: ["recovery"] as const,

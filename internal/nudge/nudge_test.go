@@ -214,8 +214,8 @@ func TestTheNudgeAnswersToItsOwnId(t *testing.T) {
 	}
 	id, _ := r.decrypt(r.service.bodies[0])["nudge_id"].(string)
 
-	// This is what the service worker does when somebody taps Drop.
-	got, err := r.store.ActOnNudge(t.Context(), r.principal.ID, id, store.ActionDrop)
+	// This is what the service worker does when somebody taps Bin.
+	got, err := r.store.ActOnNudge(t.Context(), r.principal.ID, id)
 	if err != nil {
 		t.Fatalf("ActOnNudge(): %v", err)
 	}

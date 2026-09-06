@@ -119,8 +119,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/reminders", s.requireSession(s.listReminders))
 	mux.Handle("POST /api/reminders", s.requireSession(s.createReminder))
 	mux.Handle("PATCH /api/reminders/{id}", s.requireSession(s.updateReminder))
-	mux.Handle("POST /api/reminders/{id}/done", s.requireSession(s.endReminder))
-	mux.Handle("POST /api/reminders/{id}/revive", s.requireSession(s.reviveReminder))
+	mux.Handle("POST /api/reminders/{id}/bin", s.requireSession(s.binReminder))
+	mux.Handle("POST /api/reminders/{id}/restore", s.requireSession(s.restoreReminder))
 	mux.Handle("DELETE /api/reminders/{id}", s.requireSession(s.deleteReminder))
 
 	// One account's own, never the instance's: the key spends their credit and the
@@ -144,8 +144,7 @@ func (s *Server) Handler() http.Handler {
 
 	// The two the service worker calls. Same-origin from a worker, so the session cookie
 	// rides along under SameSite=Lax and Sec-Fetch-Site says same-origin.
-	mux.Handle("POST /api/nudges/{id}/done", s.requireSession(s.actOnNudge))
-	mux.Handle("POST /api/nudges/{id}/drop", s.requireSession(s.actOnNudge))
+	mux.Handle("POST /api/nudges/{id}/bin", s.requireSession(s.actOnNudge))
 
 	// Administrators only. The mail relay is instance-wide configuration, which is why it
 	// lives here rather than on anybody's own settings.

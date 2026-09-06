@@ -70,10 +70,10 @@ async function showOne(body, nudgeID, silent) {
     renotify: !silent,
     silent,
     data: { nudge_id: nudgeID },
-    actions: [
-      { action: "done", title: "Done" },
-      { action: "drop", title: "Drop" },
-    ],
+    // One action, where there were two. Done and Drop ended a reminder identically and the
+    // second existed only so that finishing something never started did not mean claiming
+    // otherwise — a bin claims neither, so one covers both.
+    actions: [{ action: "bin", title: "Bin" }],
   });
 }
 
@@ -125,12 +125,12 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     (async () => {
-      if (id && (action === "done" || action === "drop")) {
+      if (id && action === "bin") {
         try {
           // Same-origin from a worker, so the session cookie rides along under
           // SameSite=Lax and Sec-Fetch-Site says same-origin — which is why the CSRF
           // guard needs no exception for this.
-          const response = await fetch(`/api/nudges/${id}/${action}`, {
+          const response = await fetch(`/api/nudges/${id}/bin`, {
             method: "POST",
             credentials: "same-origin",
           });

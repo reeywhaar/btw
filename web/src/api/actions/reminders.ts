@@ -6,11 +6,11 @@ export type Reminder = {
   /** What the sentence could not hold. Never sent in a push. */
   note: string;
   created_at: number;
-  done_at: number | null;
+  binned_at: number | null;
 };
 
 // Live and finished are two calls rather than one call with a filter, because they are two
-// different screens and the finished list is the one nobody looks at.
+// different screens and the bin is the one nobody looks at.
 export const getReminders = (done = false) =>
   request<{ reminders: Reminder[] }>(
     `/api/reminders${done ? "?done=true" : ""}`,
@@ -19,8 +19,7 @@ export const getReminders = (done = false) =>
 export const postReminders = (text: string) =>
   request<Reminder>("/api/reminders", { method: "POST", body: { text } });
 
-// Done and Drop end a reminder identically; which was pressed is recorded on the nudge that
-// was answered, when there was one. So there is one route here and not two.
+// One gesture, where there were two. What it replaced and why is in docs/conventions.md.
 /**
  * Changes what a reminder says. Absent leaves a field alone, empty clears it — which is how
  * a description is deleted without also retyping the sentence.
@@ -31,11 +30,12 @@ export const patchRemindersById = (
 ) =>
   request<Reminder>(`/api/reminders/${id}`, { method: "PATCH", body: changes });
 
-export const postRemindersByIdDone = (id: string) =>
-  request<void>(`/api/reminders/${id}/done`, { method: "POST" });
+/** Puts one in the bin, where it stays for thirty days and can be taken back out. */
+export const postRemindersByIdBin = (id: string) =>
+  request<void>(`/api/reminders/${id}/bin`, { method: "POST" });
 
-export const postRemindersByIdRevive = (id: string) =>
-  request<void>(`/api/reminders/${id}/revive`, { method: "POST" });
+export const postRemindersByIdRestore = (id: string) =>
+  request<void>(`/api/reminders/${id}/restore`, { method: "POST" });
 
 export const deleteRemindersById = (id: string) =>
   request<void>(`/api/reminders/${id}`, { method: "DELETE" });

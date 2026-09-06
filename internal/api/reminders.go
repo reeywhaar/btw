@@ -15,10 +15,10 @@ func reminderJSON(r store.Reminder) map[string]any {
 		// place this deliberately does not appear.
 		"note":       r.Note,
 		"created_at": r.CreatedAt.Unix(),
-		"done_at":    nil,
+		"binned_at":  nil,
 	}
 	if r.Done() {
-		out["done_at"] = r.DoneAt.Unix()
+		out["binned_at"] = r.BinnedAt.Unix()
 	}
 	// last_nudged_at is deliberately absent. It is how the selection works, not something
 	// a person is meant to reason about — and showing it invites exactly the arithmetic
@@ -105,13 +105,13 @@ func (s *Server) updateReminder(w http.ResponseWriter, r *http.Request) {
 
 // endReminder is what both buttons reach. Done and Drop end a reminder identically; which
 // was pressed is recorded on the nudge that was answered, when there was one.
-func (s *Server) endReminder(w http.ResponseWriter, r *http.Request) {
+func (s *Server) binReminder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !ids.Valid(ids.Reminder, id) {
 		writeError(w, http.StatusBadRequest, "that is not a reminder")
 		return
 	}
-	if err := s.store.EndReminder(r.Context(), principal(r).ID, id); err != nil {
+	if err := s.store.BinReminder(r.Context(), principal(r).ID, id); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -119,13 +119,13 @@ func (s *Server) endReminder(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) reviveReminder(w http.ResponseWriter, r *http.Request) {
+func (s *Server) restoreReminder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !ids.Valid(ids.Reminder, id) {
 		writeError(w, http.StatusBadRequest, "that is not a reminder")
 		return
 	}
-	if err := s.store.ReviveReminder(r.Context(), principal(r).ID, id); err != nil {
+	if err := s.store.RestoreReminder(r.Context(), principal(r).ID, id); err != nil {
 		s.fail(w, r, err)
 		return
 	}

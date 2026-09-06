@@ -1,9 +1,8 @@
 /**
  * A cross inside a circle, at the size of the text beside it.
  *
- * Distinct from [CrossIcon], which is the bare cross a person presses to drop a reminder.
- * That one is an action somebody takes; this one is a state something is in, and drawing them
- * the same shape would make a report look like a button.
+ * Circled rather than bare, because it reports a state rather than offering an action. A cross
+ * on its own reads as something to press.
  */
 export function CrossCircleIcon({ className = "" }: { className?: string }) {
   return (

@@ -20,25 +20,30 @@ minute on a particular device. Reminders persist; nudges happen.
 | **principal** | An account, admin or user |
 | **companion** | The model an account gave a key for, and what it is told about them |
 | **proxy** | Somewhere else to reach the gateway from. Never "relay", which is the mail one |
-| **advice** | What the companion said about one reminder: its hours, and whether it is exclusive |
-| **slot** (companion) | One window of advice: a day and a range of minutes, in local time |
-| **done** | Finished with, because it was done |
-| **drop** | Finished with, because it turned out not to be wanted |
+| **advice** | What the companion said about one reminder: how well each half hour of the week suits it |
+| **span** | One stretch of advice: some days, a range of hours, and a weight |
+| **bin** | Where a reminder goes when somebody is finished with it. Both a noun and the verb |
 
 Never "task", never "todo", never "item". Never "notification" in code — that is the
 browser's word for what a nudge becomes once it is on screen, and keeping the two apart is
 what stops `sendNotification` and `sendNudge` both existing.
 
-### done and drop
+Never "done" or "drop" either, and never "archive". btw is not a to-do list and had borrowed
+one's vocabulary: two marks on every row, *done* and beside it *drop*, which ended a reminder
+identically and differed only in the word. The second existed so that finishing something never
+started did not require claiming otherwise — a real problem, and a bin solves it better by
+claiming neither. One gesture, and it says where the thing actually went.
 
-Both set `reminders.done_at` and neither is a delete. They are two words for one outcome
-because they are two different acts — "I did it" and "I do not want this" — and a product
-with only *Done* makes ending something you never did feel like a small lie, which is enough
-friction that people stop pressing anything.
+### The bin is a place, not a state
 
-Which one was pressed is recorded on the **nudge**, not on the reminder, and nothing in the
-program reads it back. It is kept because the two are genuinely different and a log that
-flattened them could not answer a question that has not been asked yet.
+A binned reminder is kept, listed, and can be taken back out. Nothing is struck through: a line
+through a sentence says *done*, which is the claim being avoided.
+
+**Thirty days, then it is thrown away for good.** That sweep is the only delete in the program
+nobody asked for, and it is what makes the bin a bin rather than a second list of everything
+anybody ever wrote. Nothing counts down towards it — a number ticking away beside something
+already finished with is exactly the sort this product exists not to show — and deleting by hand
+is still there for anybody who wants it gone now.
 
 ## Commit messages
 

@@ -7,7 +7,7 @@ reading this in a year. Each one below earns its place.
 
 | what | version | why |
 | --- | --- | --- |
-| Go | 1.27 | Routing patterns with methods (`POST /api/reminders/{id}/done`) removed the last reason to take a router dependency |
+| Go | 1.27 | Routing patterns with methods (`POST /api/reminders/{id}/bin`) removed the last reason to take a router dependency |
 | `net/http` | stdlib | See above. No chi, no gorilla, no gin |
 | `log/slog` | stdlib | Structured logging without a dependency |
 | `crypto/ecdh`, `crypto/hkdf`, `crypto/aes` | stdlib | Web Push message encryption, RFC 8291. `crypto/hkdf` has been in the standard library since 1.24, which is what removed the last reason to take a library for this — see [push.md](push.md) |

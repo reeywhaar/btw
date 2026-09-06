@@ -363,7 +363,7 @@ func TestAdviceOutlivesADoneReminderAndNotADeletedOne(t *testing.T) {
 	]}`
 	adviser(st).Once(ctx)
 
-	if err := st.EndReminder(ctx, p.ID, kept.ID); err != nil {
+	if err := st.BinReminder(ctx, p.ID, kept.ID); err != nil {
 		t.Fatalf("EndReminder(): %v", err)
 	}
 	if err := st.DeleteReminder(ctx, p.ID, gone.ID); err != nil {
@@ -374,7 +374,7 @@ func TestAdviceOutlivesADoneReminderAndNotADeletedOne(t *testing.T) {
 	}
 
 	// Reviving restores a reminder that still has its advice, without waiting for a new round.
-	if err := st.ReviveReminder(ctx, p.ID, kept.ID); err != nil {
+	if err := st.RestoreReminder(ctx, p.ID, kept.ID); err != nil {
 		t.Fatalf("ReviveReminder(): %v", err)
 	}
 	got, err := st.Candidates(ctx, p.ID, st.Now(), store.IgnoreFloor)

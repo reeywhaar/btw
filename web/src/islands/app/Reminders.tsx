@@ -5,8 +5,8 @@ import {
   deleteRemindersById,
   getReminders,
   postReminders,
-  postRemindersByIdDone,
-  postRemindersByIdRevive,
+  postRemindersByIdBin,
+  postRemindersByIdRestore,
   patchRemindersById,
   type Reminder,
 } from "@app/api/actions/reminders";
@@ -15,12 +15,11 @@ import { Dialog } from "@app/components/Dialog";
 import { TextArea } from "@app/components/TextArea";
 import { TextField } from "@app/components/TextField";
 import { IconButton } from "@app/components/IconButton";
-import { CheckIcon } from "@app/components/icons/CheckIcon";
-import { CrossIcon } from "@app/components/icons/CrossIcon";
+import { BinIcon } from "@app/components/icons/BinIcon";
 import { qk } from "@app/api/keys";
 
 export function Reminders() {
-  const [showDone, setShowDone] = useState(false);
+  const [showBin, setShowBin] = useState(false);
   const client = useQueryClient();
   const invalidate = () => {
     void client.invalidateQueries({ queryKey: ["reminders"] });
@@ -30,10 +29,10 @@ export function Reminders() {
     queryKey: qk.reminders(false),
     queryFn: () => getReminders(false),
   });
-  const done = useQuery({
+  const binned = useQuery({
     queryKey: qk.reminders(true),
     queryFn: () => getReminders(true),
-    enabled: showDone,
+    enabled: showBin,
   });
 
   return (
@@ -54,22 +53,32 @@ export function Reminders() {
       </ul>
 
       <button
-        onClick={() => setShowDone(!showDone)}
+        onClick={() => setShowBin(!showBin)}
         className="mt-8 text-sm text-faint underline-offset-4 hover:text-fg hover:underline"
       >
         {/* No count. Not here, not on a tag, not in the title, not on the icon. */}
-        {showDone ? "hide finished" : "finished"}
+        {showBin ? "hide bin" : "bin"}
       </button>
 
-      {showDone && (
-        <ul className="mt-3 divide-y divide-line">
-          {done.data?.reminders.map((r) => (
-            <FinishedRow key={r.id} reminder={r} onDone={invalidate} />
-          ))}
-          {done.isSuccess && done.data.reminders.length === 0 && (
-            <li className="py-4 text-sm text-faint">Nothing finished yet.</li>
+      {showBin && (
+        <>
+          <ul className="mt-3 divide-y divide-line">
+            {binned.data?.reminders.map((r) => (
+              <BinnedRow key={r.id} reminder={r} onDone={invalidate} />
+            ))}
+            {binned.isSuccess && binned.data.reminders.length === 0 && (
+              <li className="py-4 text-sm text-faint">The bin is empty.</li>
+            )}
+          </ul>
+          {binned.isSuccess && binned.data.reminders.length > 0 && (
+            // Said once, under the list, rather than as a countdown on each row. A number
+            // ticking down beside something somebody has finished with is exactly the kind
+            // this product exists not to show.
+            <p className="mt-3 text-sm text-faint">
+              Anything left here for thirty days is thrown away.
+            </p>
           )}
-        </ul>
+        </>
       )}
     </main>
   );
@@ -112,8 +121,8 @@ function Compose({ onDone }: { onDone: () => void }) {
 
 function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
-  const end = useMutation({
-    mutationFn: postRemindersByIdDone,
+  const bin = useMutation({
+    mutationFn: postRemindersByIdBin,
     onSuccess: onDone,
   });
 
@@ -132,7 +141,7 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
           first line level with the marks and lets it wrap downward. */}
       <li className="flex items-start gap-1 py-2">
         {/* The sentence is the way in, because it is the thing somebody is looking at. Its
-            own button rather than a click on the row, so it does not swallow Done and Drop
+            own button rather than a click on the row, so it does not swallow the bin
             or nest one control inside another. */}
         <button
           onClick={() => setEditing(true)}
@@ -148,14 +157,12 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
             </span>
           )}
         </button>
-        {/* Done and Drop end a reminder identically. The two marks exist because they are
-            two different acts — "I did it" and "I do not want this" — and the label on each
-            is what says which, since a tick and a cross alone would not. */}
-        <IconButton label="Done" onClick={() => end.mutate(reminder.id)}>
-          <CheckIcon />
-        </IconButton>
-        <IconButton label="Drop" onClick={() => end.mutate(reminder.id)}>
-          <CrossIcon />
+        {/* One mark. It was a tick and a cross, which ended a reminder identically and
+            differed only in the word beside them — a to-do list's *done* and *drop*, where the
+            second existed so that finishing something never started did not mean claiming
+            otherwise. A bin claims neither, and says where the thing actually goes. */}
+        <IconButton label="Bin" onClick={() => bin.mutate(reminder.id)}>
+          <BinIcon />
         </IconButton>
       </li>
 
@@ -175,9 +182,9 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
 /**
  * Editing what a reminder says.
  *
- * Ending it is not in here. Done and Drop sit on the row and on the notification, and
- * folding them into a save dialog would make "fix this wording" and "I am finished with
- * this" the same gesture behind the same button.
+ * Binning it is not in here. The bin sits on the row and on the notification, and folding it
+ * into a save dialog would make "fix this wording" and "I am finished with this" the same
+ * gesture behind the same button.
  */
 function EditDialog({
   open,
@@ -262,15 +269,15 @@ function EditDialog({
   );
 }
 
-function FinishedRow({
+function BinnedRow({
   reminder,
   onDone,
 }: {
   reminder: Reminder;
   onDone: () => void;
 }) {
-  const revive = useMutation({
-    mutationFn: postRemindersByIdRevive,
+  const restore = useMutation({
+    mutationFn: postRemindersByIdRestore,
     onSuccess: onDone,
   });
   const remove = useMutation({
@@ -280,11 +287,11 @@ function FinishedRow({
 
   return (
     <li className="flex items-baseline gap-3 py-3 text-faint">
-      <span className="min-w-0 flex-1 break-words line-through">
-        {reminder.text}
-      </span>
+      {/* Not struck through. A line through it says "done", which is the claim the bin was
+          brought in to stop making — this one may simply not be wanted. */}
+      <span className="min-w-0 flex-1 break-words">{reminder.text}</span>
       <button
-        onClick={() => revive.mutate(reminder.id)}
+        onClick={() => restore.mutate(reminder.id)}
         className="shrink-0 text-sm underline-offset-4 hover:text-fg hover:underline"
       >
         put back

@@ -283,7 +283,7 @@ func TestEndingAReminderTakesItOffTheList(t *testing.T) {
 	}
 	decodeBody(t, h.do("POST", "/api/reminders", map[string]string{"text": "ring the dentist"}), &created)
 
-	resp := h.do("POST", "/api/reminders/"+created.ID+"/done", nil)
+	resp := h.do("POST", "/api/reminders/"+created.ID+"/bin", nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("done = %s, want 204", resp.Status)
@@ -321,7 +321,7 @@ func TestAnswringANudgeEndsItsReminder(t *testing.T) {
 
 	// This is the request the service worker makes when somebody taps Drop on a lock
 	// screen. Same-origin from a worker, so the cookie rides along and the guard passes.
-	resp := h.do("POST", "/api/nudges/"+nudgeID+"/drop", nil)
+	resp := h.do("POST", "/api/nudges/"+nudgeID+"/bin", nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("drop = %s, want 204", resp.Status)
@@ -351,7 +351,7 @@ func TestSomebodyElsesReminderIsNotFoundRatherThanForbidden(t *testing.T) {
 
 	// Whether a stranger keeps a reminder is not the caller's business either way, and
 	// scoping the lookup and checking the owner become one operation.
-	resp := h.do("POST", "/api/reminders/"+theirs.ID+"/done", nil)
+	resp := h.do("POST", "/api/reminders/"+theirs.ID+"/bin", nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %s, want 404", resp.Status)

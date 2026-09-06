@@ -134,45 +134,43 @@ notifications, which it announces by existing.
 ### Reminders
 
 ```
-GET    /api/reminders[?done=true]        {reminders: [...]}
+GET    /api/reminders[?binned=true]      {reminders: [...]}
 POST   /api/reminders                    {text} → the reminder
 PATCH  /api/reminders/{id}               {text?, note?} → the reminder
-POST   /api/reminders/{id}/done          → 204
-POST   /api/reminders/{id}/revive        → 204
+POST   /api/reminders/{id}/bin           → 204
+POST   /api/reminders/{id}/restore       → 204
 DELETE /api/reminders/{id}               → 204
 ```
 
 **`POST` takes one field.** Typing a sentence is the entire path to a reminder existing;
 everything else has a default that is deliberately invisible.
 
-**Live and finished are two calls, not one call with a filter**, because they are two different
-screens and the finished list is the one nobody looks at.
+**The list and the bin are two calls, not one call with a filter**, because they are two
+different screens and the bin is the one nobody looks at.
 
 `PATCH` takes pointers, so **absent leaves a field alone and empty clears it** — which is how
 a description is deleted without also retyping the sentence. It changes wording only: ending a
 reminder has its own route, and folding it in would make "fix this" and "I am finished with
 this" the same request.
 
-A reminder carries `id`, `text`, `note`, `created_at` and `done_at`. It deliberately does **not** carry
-`last_nudged_at`: that is how the selection works, not something a person is meant to reason
-about, and showing it invites exactly the arithmetic this product exists to avoid.
+A reminder carries `id`, `text`, `note`, `created_at` and `binned_at`. It deliberately does
+**not** carry `last_nudged_at`: that is how the selection works, not something a person is meant
+to reason about, and showing it invites exactly the arithmetic this product exists to avoid.
 
-There is one *done* route and not a `done` and a `drop`, because both end a reminder
-identically. Which button was pressed is recorded on the nudge — see below — and only when
-there was a nudge to record it against.
+**One route, where there were two.** `done` and `drop` ended a reminder identically and differed
+only in the word beside them — see [conventions.md](conventions.md#the-bin-is-a-place-not-a-state).
+`restore` is for the press that was a mistake, `DELETE` is for the typo and for emptying the bin
+by hand, and anything left in the bin thirty days is deleted by a sweep.
 
-`revive` is for the one pressed by mistake. `DELETE` is for the typo.
-
-**Ending an already-ended reminder is `204`, not an error.** A notification that has sat on a
-lock screen since yesterday can be answered after the thing was already ended in the app, and
-the person pressing it wanted it ended either way.
+**Binning an already-binned reminder is `204`, not an error.** A notification that has sat on a
+lock screen since yesterday can be answered after the thing was already binned in the app, and
+the person pressing it wanted it gone either way.
 
 ### Nudges
 
 ```
 POST   /api/nudges                       → {sent: bool} — send one now
-POST   /api/nudges/{id}/done             → 204
-POST   /api/nudges/{id}/drop             → 204
+POST   /api/nudges/{id}/bin              → 204
 ```
 
 **`POST /api/nudges` creates one**, which is what the button does and what the path now says.
@@ -358,7 +356,7 @@ Actions are named mechanically from the route — `<method><PathSegmentsInPascal
 ```
 getReminders                  GET    /api/reminders
 postReminders                 POST   /api/reminders
-postRemindersByIdDone         POST   /api/reminders/{id}/done
+postRemindersByIdBin          POST   /api/reminders/{id}/bin
 deleteDevicesById             DELETE /api/devices/{id}
 postAuthInvitesByTokenAccept  POST   /api/auth/invites/{token}/accept
 patchRhythm                   PATCH  /api/rhythm

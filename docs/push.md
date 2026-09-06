@@ -166,7 +166,8 @@ A push that cannot be parsed still shows something. The subscription was granted
 
 ### The buttons cannot be load-bearing
 
-The worker declares two actions, Done and Drop. Two, because `Notification.maxActions` is 2 on
+The worker declares one action, Bin. It declared two — *done* and *drop* — and
+`Notification.maxActions` is 2 on
 every platform measured — so there was never room for a third, and any new button displaces an
 existing one.
 
@@ -176,7 +177,7 @@ a web app can fix, and it is not something to design around by pretending otherw
 
 So the rule is: **every action a notification offers must also be reachable by tapping the
 notification, and again in the list.** A plain tap with no action falls through to focusing or
-opening the app, and the same Done and Drop sit on every row. The buttons are a shortcut for
+opening the app, and the same Bin sits on every row. The button is a shortcut for
 the platforms that render them, never the only way to answer.
 
 ## One browser, one device

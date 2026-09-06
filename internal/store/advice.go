@@ -214,7 +214,7 @@ func (s *Store) Advice(ctx context.Context, principalID string) (AdviceState, er
 // of them" or "none", which carries no number that goes up.
 func (s *Store) AdviceCoverage(ctx context.Context, principalID string) (open, answered int, err error) {
 	rows, err := s.main.QueryContext(ctx,
-		`SELECT id FROM reminders WHERE principal_id = ? AND done_at IS NULL`, principalID)
+		`SELECT id FROM reminders WHERE principal_id = ? AND binned_at IS NULL`, principalID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("read open reminders: %w", err)
 	}

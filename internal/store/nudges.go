@@ -10,17 +10,6 @@ import (
 	"btw/internal/ids"
 )
 
-// What a person pressed. Recorded here and nowhere else: reminders.done_at says a reminder
-// ended, and this says which of the two gestures ended it.
-//
-// Nothing in the program reads the distinction back. It is kept because the two are
-// different acts — one is "I did it" and the other is "I do not want this" — and a log
-// that flattened them could not answer a question that has not been asked yet.
-const (
-	ActionDone = "done"
-	ActionDrop = "drop"
-)
-
 // Nudge is one delivery of one reminder.
 type Nudge struct {
 	ID          string
@@ -116,10 +105,7 @@ func (s *Store) CountNudges(ctx context.Context, reminderID string) (int, error)
 // Acting twice is not an error and does not move the record: a notification that has sat
 // on a lock screen since yesterday can be answered after the thing was already ended in
 // the app, and the person pressing it wanted it ended either way.
-func (s *Store) ActOnNudge(ctx context.Context, principalID, nudgeID, action string) (string, error) {
-	if action != ActionDone && action != ActionDrop {
-		return "", Invalid("%q is not something you can do with a nudge", action)
-	}
+func (s *Store) ActOnNudge(ctx context.Context, principalID, nudgeID string) (string, error) {
 	var reminderID string
 	err := s.derived.QueryRowContext(ctx,
 		`SELECT reminder_id FROM nudges WHERE id = ? AND principal_id = ?`, nudgeID, principalID).Scan(&reminderID)
@@ -130,8 +116,10 @@ func (s *Store) ActOnNudge(ctx context.Context, principalID, nudgeID, action str
 		return "", fmt.Errorf("read nudge: %w", err)
 	}
 	if _, err := s.derived.ExecContext(ctx,
-		`UPDATE nudges SET acted_at = ?, action = ? WHERE id = ? AND acted_at IS NULL`,
-		unix(s.Now()), action, nudgeID); err != nil {
+		// Whether it was answered, and not how. There is one way now, and a column holding
+		// one value for every row is a column somebody will one day believe means something.
+		`UPDATE nudges SET acted_at = ? WHERE id = ? AND acted_at IS NULL`,
+		unix(s.Now()), nudgeID); err != nil {
 		return "", fmt.Errorf("act on nudge: %w", err)
 	}
 	return reminderID, nil

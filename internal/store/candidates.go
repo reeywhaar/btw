@@ -65,7 +65,7 @@ func (s *Store) Candidates(ctx context.Context, principalID string, now time.Tim
 	query := `SELECT id, text, priority, min_interval, last_nudged_at
 		   FROM reminders
 		  WHERE principal_id = ?
-		    AND done_at IS NULL
+		    AND binned_at IS NULL
 		    AND priority > 0`
 	args := []any{principalID}
 	if floor == RespectFloor {

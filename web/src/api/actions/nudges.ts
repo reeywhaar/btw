@@ -14,7 +14,7 @@ export type Outcome = "sent" | "nothing" | "undelivered";
  * a status code. Two of them are different problems and sending somebody to the wrong one is
  * how a button earns a reputation for lying.
  *
- * Answering a nudge — done and drop — is not here. Those are posted by the service worker
+ * Answering a nudge is not here. That is posted by the service worker
  * from a lock screen, where there is no bundle to import from.
  */
 export const postNudges = () =>
