@@ -578,7 +578,7 @@ function Week({ curve }: { curve: number[][] }) {
             {/* Filled and not outlined. An outline drew a heavy black rule along the bottom of
                 every row — the baseline at zero, which carries no information — and turned a
                 shape somebody reads at a glance into a diagram of itself. */}
-            <path d={area(day)} fill="currentColor" fillOpacity={0.5} />
+            <path d={area(day)} className="fill-plot-ink" />
             {/* Invisible, and the only way to read an exact number off a drawing. */}
             {day.map((v, x) => (
               <rect
