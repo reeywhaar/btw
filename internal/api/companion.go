@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"btw/internal/openrouter"
 	"btw/internal/store"
@@ -16,6 +17,17 @@ import (
 // say — a reminder written, described, ended, revived or deleted, an `about` rewritten, a
 // rhythm moved — and never from one that could not, which is why nudging a reminder does not
 // appear in that list.
+// adviceForgotten drops what was said about a reminder that has been deleted outright.
+//
+// Only a delete, never a done: a finished reminder can be revived, and what the companion said
+// about it is still true. Best effort like the marking above — a row left behind is read by
+// nothing, since the weighting only ever asks about reminders that still exist.
+func (s *Server) adviceForgotten(r *http.Request, reminderID string) {
+	if err := s.store.ForgetAdvice(r.Context(), reminderID); err != nil {
+		s.log.Error("could not forget advice", "reminder", reminderID, "err", err)
+	}
+}
+
 func (s *Server) adviceStale(r *http.Request, principalID string) {
 	if err := s.store.MarkAdviceStale(r.Context(), principalID); err != nil {
 		s.log.Error("could not mark advice stale", "principal", principalID, "err", err)
@@ -41,12 +53,86 @@ func companionJSON(set openrouter.Settings) map[string]any {
 }
 
 func (s *Server) getCompanion(w http.ResponseWriter, r *http.Request) {
-	set, err := s.store.Companion(r.Context(), principal(r).ID)
+	p := principal(r)
+	set, err := s.store.Companion(r.Context(), p.ID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, companionJSON(set))
+
+	body := companionJSON(set)
+	// Only for a configured companion. Reporting on the advice of an account that has no key
+	// would be reporting on a loop that never runs.
+	if set.Configured() {
+		advice, err := s.adviceStatus(r, p.ID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		body["advice"] = advice
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// adviceStatus is how the last round of questions went, as the interface needs it.
+//
+// **No counts.** docs/api_design.md forbids one in a response body, and the reason applies
+// here as much as anywhere: a count in a payload is a count somebody renders, and "5 of 7
+// reminders" is a number that goes up. What somebody actually needs to know is whether the
+// companion has an opinion about everything or only some of it, and "some" says that without
+// putting their workload on a settings screen.
+//
+// The four states are derived here rather than left to the client to assemble out of
+// timestamps, so that "failed" means the same thing everywhere it is shown.
+func (s *Server) adviceStatus(r *http.Request, principalID string) (map[string]any, error) {
+	state, err := s.store.Advice(r.Context(), principalID)
+	if err != nil {
+		return nil, err
+	}
+	open, answered, err := s.store.AdviceCoverage(r.Context(), principalID)
+	if err != nil {
+		return nil, err
+	}
+
+	status := "none"
+	switch {
+	// A failure is reported over any coverage, because the coverage is what the *last
+	// successful* round left behind and saying "answered for all of them" while the key is
+	// rejected is the exact confusion this is meant to end.
+	case state.Limited:
+		// Not "failed". A quota is not a mistake and wants nothing done about it, and showing
+		// it the way a rejected key is shown sends somebody to check a key that is fine.
+		status = "limited"
+	case state.Error != "":
+		status = "failed"
+	case state.AdvisedAt.IsZero():
+		status = "none"
+	case open == 0 || answered >= open:
+		status = "all"
+	case answered > 0:
+		status = "some"
+	default:
+		status = "none"
+	}
+
+	return map[string]any{
+		"status": status,
+		// Unix seconds, per the API's rule about timestamps: rendering "four minutes ago" in
+		// a reader's own zone is the browser's job.
+		"advised_at":   unixOrNil(state.AdvisedAt),
+		"attempted_at": unixOrNil(state.AttemptedAt),
+		"error":        state.Error,
+		// Whether something has changed since the last answer, so the interface can say a
+		// fresh look is coming rather than presenting stale advice as current.
+		"stale": state.Stale,
+	}, nil
+}
+
+func unixOrNil(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.Unix()
 }
 
 func (s *Server) putCompanion(w http.ResponseWriter, r *http.Request) {

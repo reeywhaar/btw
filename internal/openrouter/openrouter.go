@@ -35,6 +35,14 @@ const Endpoint = "https://openrouter.ai/api/v1/chat/completions"
 // among them — so anything asking for a strict schema has to check rather than assume.
 const DefaultModel = "minimax/minimax-m3:free"
 
+// ErrRateLimited is a refusal that will pass on its own.
+//
+// A sentinel rather than a string somebody greps for, because the caller's response to it is
+// categorically different from every other refusal here: a rejected key and a missing model
+// want a person, and this wants a wait. A background loop that cannot tell them apart either
+// hammers a quota it has already exhausted or gives up on a key that is fine.
+var ErrRateLimited = errors.New("rate limited")
+
 // Timeout caps one exchange.
 //
 // Long, because a reasoning model thinks before it answers and a free endpoint queues. It is
@@ -289,9 +297,10 @@ func explain(code, status int, message string) error {
 	case http.StatusNotFound:
 		return fmt.Errorf("no such model: %s", said)
 	case http.StatusTooManyRequests:
-		// Worth naming, because it is the one failure that is not a mistake. The free models
-		// allow twenty requests a minute and fifty a day until credit has been bought.
-		return fmt.Errorf("too many requests for now: %s", said)
+		// The one failure that is not a mistake. The free models allow twenty requests a
+		// minute and fifty a day until credit has been bought, so a loop will meet this
+		// honestly rather than through a bug.
+		return fmt.Errorf("%w: %s", ErrRateLimited, said)
 	case http.StatusBadGateway, http.StatusServiceUnavailable:
 		return fmt.Errorf("the model is unavailable: %s", said)
 	default:

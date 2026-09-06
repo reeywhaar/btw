@@ -21,6 +21,7 @@ package advise
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -94,23 +95,38 @@ func (a *Adviser) Once(ctx context.Context) {
 		default:
 		}
 
-		stale, err := a.Store.AdviceIsStale(ctx, id)
+		state, err := a.Store.Advice(ctx, id)
 		if err != nil {
 			a.Log.Error("could not read advice state", "principal", id, "err", err)
 			continue
 		}
-		if !stale {
+		if !state.Stale {
 			continue
 		}
-		if err := a.advise(ctx, id); err != nil {
-			// Recorded against the account as well as logged, so that somebody whose key
-			// stopped working can be told rather than left wondering why nothing improves.
-			// The flag stays set, so the next pass tries again.
-			a.Log.Warn("could not advise", "principal", id, "err", err)
-			if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error()); err != nil {
-				a.Log.Error("could not record an advice failure", "principal", id, "err", err)
-			}
+
+		err = a.advise(ctx, id)
+		if err == nil {
+			continue
 		}
+
+		// Recorded against the account as well as logged, so that somebody whose key stopped
+		// working can be told rather than left wondering why nothing improves. The flag stays
+		// set, so the next pass tries again.
+		limited := errors.Is(err, openrouter.ErrRateLimited)
+		a.Log.Warn("could not advise", "principal", id, "limited", limited, "err", err)
+		if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error(), limited); err != nil {
+			a.Log.Error("could not record an advice failure", "principal", id, "err", err)
+		}
+
+		// Nothing is throttled and the pass is not abandoned, because **a quota is per key and
+		// every account brings its own**. One person's key having run out says nothing about
+		// the next person's, and pacing between two accounts would be spreading requests
+		// across quotas that were never shared.
+		//
+		// So a rate limit is only worth telling apart from every other failure, which the
+		// sentinel does: it wants a wait rather than a person, and the next pass is half an
+		// hour away — which is the wait. One account cannot reach the limit alone, since it
+		// costs at most one question per pass.
 	}
 }
 

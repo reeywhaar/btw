@@ -259,7 +259,7 @@ reminders it already has.
 ### `advice_state`
 
 ```
-principal_id, stale, advised_at, attempted_at, error
+principal_id, stale, advised_at, attempted_at, error, limited
 ```
 
 Whether a person's advice is worth what it says. A **flag rather than a timestamp comparison**:
@@ -275,6 +275,15 @@ A **failure leaves it stale** and records the reason. Clearing it would mean a k
 working quietly froze everybody's advice at whatever it last said; the loop's own interval is
 the only thing throttling the retry, which is what stops a broken key spending a day's quota in
 a minute.
+
+`limited` is whether that failure was a quota rather than a mistake — a column rather than a
+prefix on the message, because the message is the gateway's own words and matching on those
+breaks the first time OpenRouter rewords a sentence. The two are different states for whoever
+reads them: a rejected key wants somebody to fix it, and a quota wants nothing at all.
+
+`advised_at` and `attempted_at` differ exactly when the last attempt failed, which is what lets
+the interface say "answered an hour ago, and the try since then failed" rather than picking one
+and being wrong half the time.
 
 ### `sessions`
 

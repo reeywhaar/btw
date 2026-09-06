@@ -6,6 +6,7 @@ import {
   getCompanion,
   postCompanionTest,
   putCompanion,
+  type Advice,
   type Companion as CompanionType,
   type CompanionEdit,
 } from "@app/api/actions/companion";
@@ -59,6 +60,7 @@ export function Companion() {
                 </span>
               }
             />
+            {c.advice && <AdviceStatus advice={c.advice} />}
           </>
         )}
 
@@ -93,6 +95,71 @@ export function Companion() {
       />
     </>
   );
+}
+
+/**
+ * Whether the companion is actually doing anything.
+ *
+ * Without this the two states somebody most needs to tell apart look identical: a key that
+ * stopped working and a companion that simply has little to say. It was the last gap in the
+ * feature — the reason a failure was recorded at all was so it could be shown.
+ *
+ * No counts, deliberately: "some of them" rather than "5 of 7". See docs/api_design.md.
+ */
+function AdviceStatus({ advice }: { advice: Advice }) {
+  const said = {
+    none: "It has not been asked yet.",
+    all: "It has an opinion about all your reminders.",
+    some: "It has an opinion about some of your reminders.",
+    limited:
+      "Its key is out of requests for now. It will try again on its own.",
+    failed: "The last time it was asked, something went wrong.",
+  }[advice.status];
+
+  // The moment that answers "is this current" — which is the last *attempt* when one failed,
+  // and the last answer otherwise. Showing the older of the two beside a failure would read
+  // as though nothing had happened since.
+  const at =
+    advice.status === "failed" || advice.status === "limited"
+      ? advice.attempted_at
+      : advice.advised_at;
+
+  return (
+    <Field
+      label="Advice"
+      control={<span className="text-sm text-muted">{ago(at)}</span>}
+    >
+      <Note>
+        {said}
+        {advice.stale && advice.status !== "none" && (
+          <> Something has changed since, so it will look again shortly.</>
+        )}
+      </Note>
+      {/* The gateway's own words. A rejected key, a model with no credit and a slug that does
+          not exist are three different afternoons, and only the first is worth panicking about. */}
+      {advice.status === "failed" && advice.error && (
+        <p className="text-sm break-words text-accent">{advice.error}</p>
+      )}
+    </Field>
+  );
+}
+
+/**
+ * Roughly how long ago, in words.
+ *
+ * Rough on purpose, and never a clock time. btw does not show when anything is scheduled, and
+ * a precise timestamp here would be the one place in the product inviting somebody to work out
+ * when the next one is due.
+ */
+function ago(at: number | null): string {
+  if (at === null) return "never";
+  const minutes = Math.floor((Date.now() / 1000 - at) / 60);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function CompanionDialog({

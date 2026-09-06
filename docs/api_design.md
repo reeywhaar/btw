@@ -212,7 +212,7 @@ there is no plan to redraw.
 
 ```
 GET    /api/companion                    {configured, model, key_set, about, default_model,
-                                          about_limit}
+                                          about_limit, advice?}
 PUT    /api/companion                    {api_key, model, about} → the above
 DELETE /api/companion                    → 204
 POST   /api/companion/test               {} → {model, tokens}
@@ -228,6 +228,28 @@ does come back, because it is a text field somebody edits.
 
 `default_model` is sent so the form can offer it as a placeholder rather than hard-coding a
 model name in two languages, where the two would drift.
+
+`advice` is `{status, advised_at, attempted_at, error, stale}`, and is **absent until a key is
+configured** — reporting on a loop that never runs would be reporting on nothing. `status` is
+one of:
+
+| | |
+| --- | --- |
+| `none` | never asked |
+| `some` | it has an opinion about part of the open list |
+| `all` | it has an opinion about all of it |
+| `limited` | the last attempt hit the key's quota |
+| `failed` | the last attempt failed for a reason somebody has to fix |
+
+`limited` is separated from `failed` on purpose. A quota is not a mistake and wants nothing
+done about it — the next pass is the wait — and showing it the way a rejected key is shown
+sends somebody to check a key that is fine.
+
+**`some` and `all` rather than a count**, which is this payload's one temptation: it would be
+easy to send "5 of 7 reminders". [There are no counts](#there-are-no-counts) is an API rule and
+not only an interface one, and a workload is exactly the number this product exists not to
+show. The server compares the two numbers and sends the comparison. A test asserts no count
+reaches the body.
 
 `POST /api/companion/test` puts one real completion to **the values in the body**, reconciled
 against the stored ones by the same rule a save follows: an empty `api_key` means the stored

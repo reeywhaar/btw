@@ -108,31 +108,103 @@ func (s *Store) MarkAdviceStale(ctx context.Context, principalID string) error {
 	return nil
 }
 
-// AdviceIsStale reports whether this person's advice wants asking for again.
-//
-// A missing row is stale, not fresh. A derived.db thrown away takes the advice with it, so the
-// state saying "already asked" must not outlive what it was asked about.
-func (s *Store) AdviceIsStale(ctx context.Context, principalID string) (bool, error) {
-	var stale bool
+// AdviceState is how the last round of questions went.
+type AdviceState struct {
+	// Stale is whether the answer wants asking for again.
+	//
+	// A missing row is stale, not fresh. A derived.db thrown away takes the advice with it, so
+	// the state saying "already asked" must not outlive what it was asked about.
+	Stale bool
+
+	// AdvisedAt is when an answer last arrived, and AttemptedAt when one was last tried for.
+	// They differ exactly when the last attempt failed, which is what lets the interface say
+	// "answered an hour ago, and the try since then failed" rather than picking one.
+	AdvisedAt   time.Time
+	AttemptedAt time.Time
+
+	// Error is why the last attempt failed, in the gateway's own words, or empty.
+	Error string
+
+	// Limited is whether that failure was a quota rather than a mistake. Nothing needs doing
+	// about one: the next pass is the wait.
+	Limited bool
+}
+
+// Advice reads how the last round went. A missing row is the zero value, which is stale.
+func (s *Store) Advice(ctx context.Context, principalID string) (AdviceState, error) {
+	var (
+		st                 AdviceState
+		advised, attempted sql.NullInt64
+	)
 	err := s.derived.QueryRowContext(ctx,
-		`SELECT stale FROM advice_state WHERE principal_id = ?`, principalID).Scan(&stale)
+		`SELECT stale, advised_at, attempted_at, error, limited FROM advice_state WHERE principal_id = ?`,
+		principalID).Scan(&st.Stale, &advised, &attempted, &st.Error, &st.Limited)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
+		return AdviceState{Stale: true}, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read advice state: %w", err)
+		return AdviceState{}, fmt.Errorf("read advice state: %w", err)
 	}
-	return stale, nil
+	st.AdvisedAt = timeFrom(advised)
+	st.AttemptedAt = timeFrom(attempted)
+	return st, nil
+}
+
+// AdviceCoverage counts how much of somebody's open list has been answered for.
+//
+// Two numbers that exist only to be compared. Neither reaches a response body — see the rule
+// in docs/api_design.md about counts — and what the interface is told is "all of them", "some
+// of them" or "none", which is what somebody actually needs to know and carries no number that
+// goes up.
+func (s *Store) AdviceCoverage(ctx context.Context, principalID string) (open, answered int, err error) {
+	rows, err := s.main.QueryContext(ctx,
+		`SELECT id FROM reminders WHERE principal_id = ? AND done_at IS NULL`, principalID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read open reminders: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return 0, 0, fmt.Errorf("read open reminder: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	advice, err := s.adviceFor(ctx, ids)
+	if err != nil {
+		return 0, 0, err
+	}
+	return len(ids), len(advice), nil
+}
+
+// ForgetAdvice drops what was said about one reminder.
+//
+// Called when a reminder is deleted outright, and never when one is merely finished with:
+// a done reminder can be revived, and the advice it had is still true about it. A delete is
+// the only end that cannot be undone, so it is the only one that should take the advice with
+// it — otherwise the row sits in derived.db forever, read by nothing.
+func (s *Store) ForgetAdvice(ctx context.Context, reminderID string) error {
+	if _, err := s.derived.ExecContext(ctx,
+		`DELETE FROM advice WHERE reminder_id = ?`, reminderID); err != nil {
+		return fmt.Errorf("forget advice: %w", err)
+	}
+	return nil
 }
 
 // RecordAdvised marks one person's advice fresh.
 func (s *Store) RecordAdvised(ctx context.Context, principalID string, at time.Time) error {
 	_, err := s.derived.ExecContext(ctx,
-		`INSERT INTO advice_state (principal_id, stale, advised_at, attempted_at, error)
-		 VALUES (?, 0, ?, ?, '')
+		`INSERT INTO advice_state (principal_id, stale, advised_at, attempted_at, error, limited)
+		 VALUES (?, 0, ?, ?, '', 0)
 		 ON CONFLICT (principal_id) DO UPDATE SET
 		   stale = 0, advised_at = excluded.advised_at,
-		   attempted_at = excluded.attempted_at, error = ''`,
+		   attempted_at = excluded.attempted_at, error = '', limited = 0`,
 		principalID, unix(at), unix(at))
 	if err != nil {
 		return fmt.Errorf("record advised: %w", err)
@@ -146,13 +218,14 @@ func (s *Store) RecordAdvised(ctx context.Context, principalID string, at time.T
 // stopped working quietly froze everybody's advice at whatever it last said. The next pass
 // tries again — the loop's own interval is the only thing throttling it, which is what keeps a
 // broken key from spending fifty requests in a minute.
-func (s *Store) RecordAdviceFailure(ctx context.Context, principalID string, at time.Time, reason string) error {
+func (s *Store) RecordAdviceFailure(ctx context.Context, principalID string, at time.Time, reason string, limited bool) error {
 	_, err := s.derived.ExecContext(ctx,
-		`INSERT INTO advice_state (principal_id, stale, attempted_at, error)
-		 VALUES (?, 1, ?, ?)
+		`INSERT INTO advice_state (principal_id, stale, attempted_at, error, limited)
+		 VALUES (?, 1, ?, ?, ?)
 		 ON CONFLICT (principal_id) DO UPDATE SET
-		   attempted_at = excluded.attempted_at, error = excluded.error`,
-		principalID, unix(at), reason)
+		   attempted_at = excluded.attempted_at, error = excluded.error,
+		   limited = excluded.limited`,
+		principalID, unix(at), reason, limited)
 	if err != nil {
 		return fmt.Errorf("record advice failure: %w", err)
 	}

@@ -143,6 +143,7 @@ func (s *Server) deleteReminder(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.adviceForgotten(r, id)
 	s.adviceStale(r, principal(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }

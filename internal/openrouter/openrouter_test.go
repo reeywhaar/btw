@@ -2,6 +2,7 @@ package openrouter
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,7 +107,7 @@ func TestEachRefusalSaysWhichKindItWas(t *testing.T) {
 		{http.StatusUnauthorized, `{"error":{"code":401,"message":"No auth credentials found"}}`, "the key was rejected"},
 		{http.StatusPaymentRequired, `{"error":{"code":402,"message":"Insufficient credits"}}`, "no credit"},
 		{http.StatusNotFound, `{"error":{"code":404,"message":"No endpoints found for minimax/typo"}}`, "no such model"},
-		{http.StatusTooManyRequests, `{"error":{"code":429,"message":"Rate limit exceeded"}}`, "too many requests"},
+		{http.StatusTooManyRequests, `{"error":{"code":429,"message":"Rate limit exceeded"}}`, "rate limited"},
 	} {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			serve(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -157,5 +158,35 @@ func TestThereIsNothingToCheckWithoutAKey(t *testing.T) {
 	// No server: reaching one at all would be the bug.
 	if _, err := Check(t.Context(), Settings{Model: "m"}); err == nil {
 		t.Error("Check() = nil, want a refusal before any request")
+	}
+}
+
+// A quota is the one refusal here that will pass on its own, and a caller's response to it is
+// categorically different: it wants a wait, not a person. Asserted through the sentinel rather
+// than the wording, because the wording is the gateway's and will change.
+func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
+	serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":{"code":429,"message":"Rate limit exceeded, free-models-per-day"}}`)
+	})
+
+	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("Check() = %v, want it to satisfy errors.Is(ErrRateLimited)", err)
+	}
+	// And the gateway's own words survive alongside the kind, since "per day" and "per minute"
+	// are hours apart.
+	if !strings.Contains(err.Error(), "free-models-per-day") {
+		t.Errorf("error = %q, want the gateway's own words kept", err)
+	}
+
+	serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"error":{"code":401,"message":"No auth credentials found"}}`)
+	})
+	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}); errors.Is(err, ErrRateLimited) {
+		t.Error("a rejected key was reported as a rate limit")
 	}
 }

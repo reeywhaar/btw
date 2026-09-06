@@ -2,6 +2,7 @@ package advise
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,7 +32,10 @@ func (g *gateway) start(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if g.status != 0 && g.status != http.StatusOK {
 			w.WriteHeader(g.status)
-			io.WriteString(w, `{"error":{"code":401,"message":"No auth credentials found"}}`)
+			// The code in the body matches the status, as OpenRouter's does. They are read
+			// separately on purpose — the body wins — so a fixture that disagreed with itself
+			// would be testing the disagreement rather than the status it meant to send.
+			fmt.Fprintf(w, `{"error":{"code":%d,"message":"%s"}}`, g.status, http.StatusText(g.status))
 			return
 		}
 		io.WriteString(w, `{"model":"minimax/minimax-m3:free","usage":{"total_tokens":120},
@@ -196,7 +200,7 @@ func TestAnAccountWithNoRemindersCostsNoQuestion(t *testing.T) {
 	if g.asked != 0 {
 		t.Errorf("asked %d times with nothing to ask about", g.asked)
 	}
-	if stale, _ := st.AdviceIsStale(ctx, p.ID); stale {
+	if state, _ := st.Advice(ctx, p.ID); state.Stale {
 		t.Error("an account with no reminders is revisited every pass")
 	}
 }
@@ -214,7 +218,7 @@ func TestAFailedQuestionIsRememberedAndTriedAgain(t *testing.T) {
 	st.CreateReminder(ctx, p.ID, "water the plants")
 
 	adviser(st).Once(ctx)
-	if stale, _ := st.AdviceIsStale(ctx, p.ID); !stale {
+	if state, _ := st.Advice(ctx, p.ID); !state.Stale {
 		t.Error("a failure was recorded as an answer")
 	}
 
@@ -278,5 +282,113 @@ func TestTheQuestionCarriesTheWakingHoursAndTheNote(t *testing.T) {
 	// A model handed an empty section invents a person to fill it.
 	if !strings.Contains(q, "have not written anything") {
 		t.Error("an empty description is left blank rather than said")
+	}
+}
+
+// A quota is not a mistake, and it is recorded as its own kind so the interface can say "it
+// will try again" instead of sending somebody to check a key that is fine.
+func TestARateLimitIsRememberedAsAQuotaAndNotAsABrokenKey(t *testing.T) {
+	g := &gateway{status: http.StatusTooManyRequests}
+	g.start(t)
+
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.CreateReminder(ctx, p.ID, "water the plants")
+
+	adviser(st).Once(ctx)
+
+	state, err := st.Advice(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Advice(): %v", err)
+	}
+	if !state.Limited {
+		t.Error("a 429 was recorded the way a rejected key is")
+	}
+	if !state.Stale {
+		t.Error("a rate limit was treated as an answer")
+	}
+	if state.Error == "" {
+		t.Error("the gateway's own words were not kept")
+	}
+}
+
+// Keys are per account, so one person's exhausted quota says nothing about the next person's.
+// Abandoning the pass would punish everybody for one key.
+func TestOneExhaustedKeyDoesNotStopTheRest(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		seen = append(seen, key)
+		w.Header().Set("Content-Type", "application/json")
+		if key == "spent" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"error":{"code":429,"message":"Rate limit exceeded"}}`)
+			return
+		}
+		io.WriteString(w, `{"model":"m","choices":[{"finish_reason":"stop","message":{"content":"{\"results\":[]}"}}]}`)
+	}))
+	defer srv.Close()
+	defer openrouter.SetEndpoint(srv.URL)()
+
+	st := newStore(t)
+	ctx := context.Background()
+	for _, who := range []struct{ name, key string }{{"aaa", "spent"}, {"zzz", "fine"}} {
+		p := person(t, st, who.name)
+		st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: who.key})
+		st.CreateReminder(ctx, p.ID, "water the plants")
+	}
+
+	adviser(st).Once(ctx)
+
+	if len(seen) != 2 {
+		t.Fatalf("asked with %v, want both keys tried", seen)
+	}
+	if seen[1] != "fine" {
+		t.Errorf("second question used %q, want the other account's own key", seen[1])
+	}
+}
+
+// Deleting a reminder outright is the one ending that cannot be undone, so it is the one that
+// takes the advice with it. Finishing with a reminder does not: it can be revived, and what
+// was said about it is still true.
+func TestAdviceOutlivesADoneReminderAndNotADeletedOne(t *testing.T) {
+	g := &gateway{}
+	g.start(t)
+
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	kept, _ := st.CreateReminder(ctx, p.ID, "water the plants")
+	gone, _ := st.CreateReminder(ctx, p.ID, "call the dentist")
+
+	g.reply = `{"results":[
+		{"id":"` + kept.ID + `","slots":[{"day":"mon","start":"09:00","end":"10:00"}]},
+		{"id":"` + gone.ID + `","slots":[{"day":"tue","start":"09:00","end":"10:00"}]}
+	]}`
+	adviser(st).Once(ctx)
+
+	if err := st.EndReminder(ctx, p.ID, kept.ID); err != nil {
+		t.Fatalf("EndReminder(): %v", err)
+	}
+	if err := st.DeleteReminder(ctx, p.ID, gone.ID); err != nil {
+		t.Fatalf("DeleteReminder(): %v", err)
+	}
+	if err := st.ForgetAdvice(ctx, gone.ID); err != nil {
+		t.Fatalf("ForgetAdvice(): %v", err)
+	}
+
+	// Reviving restores a reminder that still has its advice, without waiting for a new round.
+	if err := st.ReviveReminder(ctx, p.ID, kept.ID); err != nil {
+		t.Fatalf("ReviveReminder(): %v", err)
+	}
+	got, err := st.Candidates(ctx, p.ID, st.Now(), store.IgnoreFloor)
+	if err != nil {
+		t.Fatalf("Candidates(): %v", err)
+	}
+	if len(got) != 1 || !got[0].Advised {
+		t.Errorf("candidates = %+v, want the revived reminder still carrying its advice", got)
 	}
 }

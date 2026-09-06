@@ -960,3 +960,93 @@ func TestACompanionNeedsASession(t *testing.T) {
 		}
 	}
 }
+
+// The companion block has to be able to tell the two states somebody most needs apart: a key
+// that stopped working, and a companion that simply has little to say.
+func TestTheCompanionSaysHowTheLastRoundWent(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "k"}).Body.Close()
+
+	read := func() map[string]any {
+		resp := h.do("GET", "/api/companion", nil)
+		defer resp.Body.Close()
+		var body struct {
+			Advice map[string]any `json:"advice"`
+		}
+		decodeBody(t, resp, &body)
+		return body.Advice
+	}
+
+	if got := read()["status"]; got != "none" {
+		t.Errorf("status = %v, want none before anything has been asked", got)
+	}
+
+	rem, err := h.store.CreateReminder(h.Context(), p.ID, "water the plants")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	other, err := h.store.CreateReminder(h.Context(), p.ID, "call the dentist")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	now := h.store.Now()
+	h.store.SetAdvice(h.Context(), []string{rem.ID, other.ID}, map[string]store.Advice{
+		rem.ID: {Slots: []store.Slot{{Day: 0, Start: 540, End: 600}}},
+	})
+	h.store.RecordAdvised(h.Context(), p.ID, now)
+
+	if got := read()["status"]; got != "some" {
+		t.Errorf("status = %v, want some when one of two was answered for", got)
+	}
+
+	h.store.SetAdvice(h.Context(), []string{rem.ID, other.ID}, map[string]store.Advice{
+		rem.ID:   {Slots: []store.Slot{}},
+		other.ID: {Slots: []store.Slot{}},
+	})
+	if got := read()["status"]; got != "all" {
+		t.Errorf("status = %v, want all when both were answered for", got)
+	}
+
+	// A quota is not a mistake and must not be shown the way a rejected key is.
+	h.store.RecordAdviceFailure(h.Context(), p.ID, now, "Rate limit exceeded", true)
+	if got := read()["status"]; got != "limited" {
+		t.Errorf("status = %v, want limited", got)
+	}
+
+	h.store.RecordAdviceFailure(h.Context(), p.ID, now, "the key was rejected", false)
+	advice := read()
+	if advice["status"] != "failed" {
+		t.Errorf("status = %v, want failed", advice["status"])
+	}
+	if advice["error"] != "the key was rejected" {
+		t.Errorf("error = %v, want the gateway's own words", advice["error"])
+	}
+}
+
+// docs/api_design.md forbids a count in a response body, and this is the payload most tempted
+// to carry one: how much of somebody's list has been answered for.
+func TestTheCompanionStatusCarriesNoCounts(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "k"}).Body.Close()
+	for _, text := range []string{"one", "two", "three"} {
+		if _, err := h.store.CreateReminder(h.Context(), p.ID, text); err != nil {
+			t.Fatalf("CreateReminder(): %v", err)
+		}
+	}
+	h.store.RecordAdvised(h.Context(), p.ID, h.store.Now())
+
+	resp := h.do("GET", "/api/companion", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	// Three reminders, none answered for. A payload carrying "3" anywhere is a payload
+	// somebody renders.
+	for _, forbidden := range []string{`:3`, `"3"`, `"reminders"`, `"answered"`, `"open"`} {
+		if bytes.Contains(body, []byte(forbidden)) {
+			t.Errorf("the companion status carries %s, which is a count: %s", forbidden, body)
+		}
+	}
+}

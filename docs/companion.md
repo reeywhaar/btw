@@ -159,6 +159,24 @@ before it configured a key.
 another person's row, and a model that echoes an id back wrongly — or helpfully invents one —
 must not be able to attach advice to it.
 
+## Whether it is working
+
+The companion block reports on the last round: when it happened, whether the companion has an
+opinion about all of the open list or only part of it, and the gateway's own words when the
+last attempt failed.
+
+It exists because without it the two states somebody most needs to tell apart look identical —
+a key that stopped working, and a companion that simply has little to say. The failure was
+already being recorded; showing it is the whole reason it was worth recording.
+
+**No counts**, which this is the one screen tempted to show: "5 of 7 reminders" is a workload,
+and the absence of a number that goes up is the product. "Some of your reminders" says what
+somebody needs. See [api_design.md](api_design.md#companion).
+
+A quota reads differently from a mistake. `limited` says the key is out of requests and will
+try again on its own; nothing needs doing, and saying so is the difference between waiting and
+going to look for a broken key that is fine.
+
 ## When it is asked
 
 Every write that could change an answer sets a flag, and a loop decides when to act.
@@ -179,6 +197,13 @@ at most one question per pass, so fifty a day survives somebody who edits someth
 single window, forty-eight times over. At fifteen minutes the same person would exhaust it
 before the evening.
 
+Nothing paces the pass and a rate limit does not stop it, because **a quota is per key and
+every account brings its own**. One person's key having run out says nothing about the next
+person's, and spreading requests between two accounts would be spreading them across quotas
+that were never shared. An earlier version did both, on the assumption of a shared ceiling that
+does not exist. What is left is telling a quota apart from a mistake, which is worth doing
+because only one of them wants a person.
+
 ## What the answer does
 
 It is the last term in the weight, and only a multiplier. The numbers, and why it can never be
@@ -195,11 +220,14 @@ reminder written a minute ago, before the next round of questions, is unaffected
 the rate-limited part, and re-deriving them later would cost one request per reminder. What
 they are for is a filter or a label in the interface, and neither exists.
 
-**A person is never told what their companion said.** The advice is invisible: it moves when
-things arrive and nothing shows why. That is defensible while it is only a weighting — btw
-deliberately shows no schedule — but a wrong answer is currently something somebody can feel
-and not see, and the only remedy is rewriting `about` and waiting.
+**A person is never told what the companion said about a particular reminder.** The settings
+block says whether it has an opinion and when it last had one; it does not say which hours it
+chose. That is defensible while it is only a weighting — btw deliberately shows no schedule —
+but a wrong answer is still something somebody can feel more easily than see, and the remedy is
+rewriting `about` and waiting.
 
-**A failure is recorded and never surfaced.** `advice_state.error` holds the reason the last
-attempt did not work, and nothing renders it, so a key that stopped working looks like a
-feature that stopped helping.
+**Nothing tells anybody a key has stopped working unless they open settings.** The state is
+recorded and shown there, which is where somebody looks once they already suspect. A push would
+reach them without their suspecting — but a nudge carries a reminder, and a notification that
+carries a status message instead is a different kind of thing arriving down the same channel.
+That is a product decision, not a plumbing one.

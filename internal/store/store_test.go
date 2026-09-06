@@ -793,11 +793,11 @@ func TestAdviceWithNoStateAtAllIsStale(t *testing.T) {
 	s := testStore(t)
 	p := testPrincipal(t, s)
 
-	stale, err := s.AdviceIsStale(context.Background(), p.ID)
+	state, err := s.Advice(context.Background(), p.ID)
 	if err != nil {
-		t.Fatalf("AdviceIsStale(): %v", err)
+		t.Fatalf("Advice(): %v", err)
 	}
-	if !stale {
+	if !state.Stale {
 		t.Error("an account nothing is recorded for was called fresh")
 	}
 }
@@ -811,23 +811,23 @@ func TestAskingAgainIsWhatClearsTheFlagAndFailingIsNot(t *testing.T) {
 	if err := s.RecordAdvised(ctx, p.ID, now); err != nil {
 		t.Fatalf("RecordAdvised(): %v", err)
 	}
-	if stale, _ := s.AdviceIsStale(ctx, p.ID); stale {
+	if state, _ := s.Advice(ctx, p.ID); state.Stale {
 		t.Error("still stale after an answer arrived")
 	}
 
 	if err := s.MarkAdviceStale(ctx, p.ID); err != nil {
 		t.Fatalf("MarkAdviceStale(): %v", err)
 	}
-	if stale, _ := s.AdviceIsStale(ctx, p.ID); !stale {
+	if state, _ := s.Advice(ctx, p.ID); !state.Stale {
 		t.Error("a change did not make the advice worth asking for again")
 	}
 
 	// A failure is not an answer. Clearing the flag here would mean a key that stopped working
 	// quietly froze everybody's advice at whatever it last said.
-	if err := s.RecordAdviceFailure(ctx, p.ID, now, "the key was rejected"); err != nil {
+	if err := s.RecordAdviceFailure(ctx, p.ID, now, "the key was rejected", false); err != nil {
 		t.Fatalf("RecordAdviceFailure(): %v", err)
 	}
-	if stale, _ := s.AdviceIsStale(ctx, p.ID); !stale {
+	if state, _ := s.Advice(ctx, p.ID); !state.Stale {
 		t.Error("a failed attempt was treated as an answer")
 	}
 }
