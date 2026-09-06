@@ -130,6 +130,14 @@ func (s *Server) Handler() http.Handler {
 
 	// Administrators only. The mail relay is instance-wide configuration, which is why it
 	// lives here rather than on anybody's own settings.
+	// How this machine reaches the internet, which is one fact about the machine — so an
+	// administrator's, unlike the key each account brings. See docs/proxies.md.
+	mux.Handle("GET /api/admin/proxy", s.requireAdmin(s.getProxy))
+	mux.Handle("PUT /api/admin/proxy", s.requireAdmin(s.putProxy))
+	mux.Handle("PATCH /api/admin/proxy", s.requireAdmin(s.patchProxy))
+	mux.Handle("DELETE /api/admin/proxy", s.requireAdmin(s.deleteProxy))
+	mux.Handle("POST /api/admin/proxy/test", s.requireAdmin(s.testProxy))
+
 	mux.Handle("GET /api/admin/relay", s.requireAdmin(s.getRelay))
 	mux.Handle("PUT /api/admin/relay", s.requireAdmin(s.putRelay))
 	mux.Handle("DELETE /api/admin/relay", s.requireAdmin(s.deleteRelay))

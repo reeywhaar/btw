@@ -231,7 +231,15 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := openrouter.Check(r.Context(), set)
+	// The instance's way out, which is an administrator's setting rather than this account's.
+	// Read here so that a test press proves the path the companion will actually take.
+	via, err := s.store.Proxy(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	res, err := openrouter.Check(r.Context(), set, via)
 	if err != nil {
 		// 502 rather than 500, for the reason docs/mail.md gives about a refused send:
 		// everything on this side worked and something upstream did not, and a 500 sends

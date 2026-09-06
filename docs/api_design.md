@@ -208,6 +208,32 @@ an interval that has changed, or for a moment that may now be the middle of the 
 next tick works the whole thing out again, which is all a rhythm change has to do now that
 there is no plan to redraw.
 
+### Proxy
+
+```
+GET    /api/admin/proxy                  {configured, kind, url, username, token_set, enabled}
+PUT    /api/admin/proxy                  {kind, url, username, token} → the above
+PATCH  /api/admin/proxy                  {enabled} → the above
+DELETE /api/admin/proxy                  → 204
+POST   /api/admin/proxy/test             {} → {reached, took_ms}
+```
+
+An administrator's, unlike the companion below it: how this machine reaches the internet is one
+fact about the machine, not one per account.
+
+**The token never comes back out**, the way the relay's password does not. An empty `token` on
+save keeps the stored one — **but only while `kind` and `url` are unchanged**, because a
+credential belongs to an endpoint and carrying one to a different host would send a secret
+somewhere it was never meant for. A save with neither is a `400`.
+
+`PATCH` is its own route rather than an `enabled` field on the save, and **saving switches the
+proxy on**. Both in [proxies.md](proxies.md#on-and-off-is-not-the-same-as-gone).
+
+`POST /api/admin/proxy/test` fetches the gateway through the saved proxy, whether or not it is
+switched on — the press means "would this work". A refusal is a `502` carrying whatever failed,
+with any address scrubbed out of it first, since a transport error names what it dialled and for
+proxio that ends in the token.
+
 ### Companion
 
 ```

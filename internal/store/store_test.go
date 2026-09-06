@@ -9,6 +9,7 @@ import (
 
 	"btw/internal/mail"
 	"btw/internal/openrouter"
+	"btw/internal/proxy"
 )
 
 // open a store against a temporary file rather than :memory:. WAL behaves differently in
@@ -920,5 +921,113 @@ func TestACandidateCarriesItsAdvice(t *testing.T) {
 				t.Errorf("unadvised candidate = %+v, want nothing attached", c)
 			}
 		}
+	}
+}
+
+// Somebody pasting the whole example — credential and all — should get back an address that
+// works, with the secret moved out of the thing that gets shown and logged.
+func TestAPastedProxyAddressIsTakenApart(t *testing.T) {
+	got, err := ValidateProxy(proxy.Settings{
+		Kind: proxy.Proxio,
+		URL:  "https://Proxio.Example.com/proxy?url=https%3A%2F%2Fopenrouter.ai&token=px_secret",
+	})
+	if err != nil {
+		t.Fatalf("ValidateProxy(): %v", err)
+	}
+	if got.URL != "https://proxio.example.com" {
+		t.Errorf("url = %q, want the host alone, lowercased", got.URL)
+	}
+	if got.Token != "px_secret" {
+		t.Errorf("token = %q, want it lifted out of the address", got.Token)
+	}
+
+	socks, err := ValidateProxy(proxy.Settings{Kind: proxy.Socks, URL: "socks5://misha:hunter2@h:1080"})
+	if err != nil {
+		t.Fatalf("ValidateProxy(): %v", err)
+	}
+	if socks.URL != "socks5://h:1080" {
+		t.Errorf("url = %q, want the credential out of the address", socks.URL)
+	}
+	if socks.Username != "misha" || socks.Token != "hunter2" {
+		t.Errorf("credential = %q/%q, want the parts put where they belong", socks.Username, socks.Token)
+	}
+}
+
+func TestAProxyIsRefusedForTheThingThatIsWrongWithIt(t *testing.T) {
+	for name, in := range map[string]proxy.Settings{
+		"no kind":            {URL: "https://p.example.com", Token: "t"},
+		"unknown kind":       {Kind: "http", URL: "https://p.example.com", Token: "t"},
+		"no address":         {Kind: proxy.Proxio, Token: "t"},
+		"no scheme":          {Kind: proxy.Proxio, URL: "proxio.example.com", Token: "t"},
+		"the wrong scheme":   {Kind: proxy.Socks, URL: "https://h:1080", Username: "u", Token: "t"},
+		"socks over http":    {Kind: proxy.Proxio, URL: "socks5://h:1080", Token: "t"},
+		"no token":           {Kind: proxy.Proxio, URL: "https://p.example.com"},
+		"socks with no user": {Kind: proxy.Socks, URL: "socks5://h:1080", Token: "t"},
+	} {
+		if _, err := ValidateProxy(in); !errors.Is(err, ErrInvalid) {
+			t.Errorf("ValidateProxy(%s) = %v, want ErrInvalid", name, err)
+		}
+	}
+
+	// A username against a kind that never reads one is a field somebody will one day believe
+	// is doing something.
+	got, err := ValidateProxy(proxy.Settings{
+		Kind: proxy.Proxio, URL: "https://p.example.com", Username: "misha", Token: "t",
+	})
+	if err != nil {
+		t.Fatalf("ValidateProxy(): %v", err)
+	}
+	if got.Username != "" {
+		t.Errorf("username = %q, want it dropped for a kind that has no use for one", got.Username)
+	}
+}
+
+// Switching off keeps the address and the credential, which is the difference between turning
+// something off to find out whether it was the problem and deleting it to find out.
+func TestSwitchingAProxyOffKeepsItsCredentialAndSavingSwitchesItOn(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	if err := s.EnableProxy(ctx, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("EnableProxy() with no proxy = %v, want ErrNotFound", err)
+	}
+
+	set := proxy.Settings{Kind: proxy.Proxio, URL: "https://p.example.com", Token: "px_secret"}
+	if err := s.SetProxy(ctx, set); err != nil {
+		t.Fatalf("SetProxy(): %v", err)
+	}
+	got, err := s.Proxy(ctx)
+	if err != nil || !got.Enabled {
+		t.Fatalf("Proxy() = %+v, %v, want it saved and switched on", got, err)
+	}
+
+	if err := s.EnableProxy(ctx, false); err != nil {
+		t.Fatalf("EnableProxy(): %v", err)
+	}
+	got, _ = s.Proxy(ctx)
+	if got.Enabled {
+		t.Error("still on after being switched off")
+	}
+	if got.Token != "px_secret" {
+		t.Errorf("token = %q, want switching off to keep it", got.Token)
+	}
+	if got.Active() {
+		t.Error("a proxy that is off is still being used")
+	}
+
+	// Saving is how it comes back: somebody who has just corrected an address is telling us
+	// the thing should work now.
+	if err := s.SetProxy(ctx, set); err != nil {
+		t.Fatalf("SetProxy(): %v", err)
+	}
+	if got, _ = s.Proxy(ctx); !got.Enabled {
+		t.Error("saving did not switch it back on")
+	}
+
+	if err := s.ClearProxy(ctx); err != nil {
+		t.Fatalf("ClearProxy(): %v", err)
+	}
+	if got, _ = s.Proxy(ctx); got.Configured() {
+		t.Errorf("Proxy() = %+v, want nothing left", got)
 	}
 }

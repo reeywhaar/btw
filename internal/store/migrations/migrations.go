@@ -1,8 +1,12 @@
 // Package migrations holds the schema's history, one file per change.
 //
 // Files are named `<timestamp>_<database>_<snake_case_name>.go` and each declares a single
-// Migration. The timestamp orders them and stops two changes made on the same day from
-// colliding; the database name says which of the two it belongs to.
+// Migration. The database name says which of the two it belongs to.
+//
+// The timestamp is the UTC second the file was written — `date -u +%Y%m%d%H%M%S` — and not a
+// counter. Two people working at once pick the same next integer and do not pick the same
+// second, so a counter collides exactly when two changes are in flight, which is when the
+// ordering matters most. See docs/conventions.md.
 //
 // # Why Go rather than .sql files
 //
@@ -77,6 +81,7 @@ var Main = []Migration{
 	mainReminderNoDefaultFloor,
 	mainRhythmDropMinGap,
 	mainCompanion,
+	mainProxy,
 }
 
 // Derived owns what the running process accumulated: sessions, the nudge waiting to go out,

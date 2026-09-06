@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.55.0
+	golang.org/x/net v0.58.0
 	modernc.org/sqlite v1.57.0
 )
 

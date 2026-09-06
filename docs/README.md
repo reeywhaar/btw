@@ -19,6 +19,7 @@ be seen not to have fixed.
 | [push.md](push.md) | Web Push: the encryption, the headers, and the iOS problem |
 | [mail.md](mail.md) | The relay, and proving a recovery address |
 | [companion.md](companion.md) | The model an account brings, and what it is told |
+| [proxies.md](proxies.md) | Reaching the gateway from somewhere else |
 | [api_design.md](api_design.md) | HTTP conventions and the full endpoint reference |
 | [backend.md](backend.md) | Go package layout and the rules each package follows |
 | [frontend.md](frontend.md) | Islands, the API layer, routing, theming |

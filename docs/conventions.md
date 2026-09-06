@@ -19,6 +19,7 @@ minute on a particular device. Reminders persist; nudges happen.
 | **device** | A browser that has agreed to receive nudges. What a person sees in settings |
 | **principal** | An account, admin or user |
 | **companion** | The model an account gave a key for, and what it is told about them |
+| **proxy** | Somewhere else to reach the gateway from. Never "relay", which is the mail one |
 | **advice** | What the companion said about one reminder: its hours, and whether it is exclusive |
 | **slot** (companion) | One window of advice: a day and a range of minutes, in local time |
 | **done** | Finished with, because it was done |
@@ -102,6 +103,28 @@ between similar glyphs or accidentally spell something.
 Ids are opaque and never parsed back. The prefix is for the human reading a log line, and
 for `ids.Valid`, which refuses a malformed id before it reaches a query — so a typo comes
 back as a `400` rather than an empty result set that looks like a `404`.
+
+## Migrations
+
+Named `<timestamp>_<database>_<snake_case_name>.go`, where the timestamp is **the UTC moment
+the file was written**, `YYYYMMDDhhmmss`:
+
+```
+date -u +%Y%m%d%H%M%S
+```
+
+Not a counter, and not a round number typed by hand. Two people working at once pick the same
+next integer and do not pick the same second, so a counter collides exactly when two changes are
+in flight — which is the moment the ordering matters most. A real timestamp also says *when*,
+which is the question anybody reading the list is actually asking.
+
+The runner sorts by name, so the timestamp is the order. Keep the list in `migrations.go` in the
+same order anyway: it is the first thing anybody reads to find out what happened.
+
+**Never edit a released migration.** Every deployment past it has recorded it as applied and
+will skip the edit forever, so the schema in front of the code silently stops matching the
+schema in the file — on those databases and no others, which is the worst kind of difference to
+go looking for. Add a new one.
 
 ## Time
 

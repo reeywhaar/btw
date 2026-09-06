@@ -30,3 +30,44 @@ export const postAdminRelayTest = (to: string) =>
     method: "POST",
     body: { to },
   });
+
+/** How this instance reaches the internet, when it cannot reach it directly. */
+export type Proxy = {
+  configured: boolean;
+  kind: "" | "proxio" | "socks5";
+  /** The address with no path. How a request is built out of it is the kind's business. */
+  url: string;
+  /** Empty for kinds that authenticate with a secret alone, which is proxio. */
+  username: string;
+  /**
+   * Whether one is stored. The credential itself never comes back out — see docs/proxies.md —
+   * and an empty token on save keeps the stored one, so long as the endpoint is unchanged.
+   */
+  token_set: boolean;
+  /** Off keeps the address and the credential, so switching back on is a press. */
+  enabled: boolean;
+};
+
+export type ProxyEdit = {
+  kind: "proxio" | "socks5";
+  url: string;
+  username: string;
+  token: string;
+};
+
+export type ProxyTest = { reached: string; took_ms: number };
+
+export const getAdminProxy = () => request<Proxy>("/api/admin/proxy");
+
+export const putAdminProxy = (proxy: ProxyEdit) =>
+  request<Proxy>("/api/admin/proxy", { method: "PUT", body: proxy });
+
+/** Switches an existing proxy on or off without touching what it holds. */
+export const patchAdminProxy = (enabled: boolean) =>
+  request<Proxy>("/api/admin/proxy", { method: "PATCH", body: { enabled } });
+
+export const deleteAdminProxy = () =>
+  request<void>("/api/admin/proxy", { method: "DELETE" });
+
+export const postAdminProxyTest = () =>
+  request<ProxyTest>("/api/admin/proxy/test", { method: "POST", body: {} });

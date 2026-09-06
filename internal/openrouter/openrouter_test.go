@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"btw/internal/proxy"
 )
 
 // serve points the package at a server started here, for the length of one test.
@@ -16,6 +18,10 @@ import (
 // argument internal/mail makes: a mock would assert that net/http was called, and what is
 // worth asserting is that the key travels as a bearer token, that a fault inside a 200 is
 // still a failure, and that the gateway's own words survive to the caller.
+// direct is no proxy at all, which is what every test here wants but the one about proxies:
+// naming it says these are about the gateway rather than about the way out.
+var direct = proxy.Settings{}
+
 func serve(t *testing.T, h http.HandlerFunc) {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -40,7 +46,7 @@ func TestACheckCarriesTheKeyAndTheModel(t *testing.T) {
 		ok(w, `{"model":"minimax/minimax-m3:free","choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":12}}`)
 	})
 
-	res, err := Check(t.Context(), Settings{APIKey: "sk-or-v1-abc", Model: "minimax/minimax-m3:free"})
+	res, err := Check(t.Context(), Settings{APIKey: "sk-or-v1-abc", Model: "minimax/minimax-m3:free"}, direct)
 	if err != nil {
 		t.Fatalf("Check(): %v", err)
 	}
@@ -62,7 +68,7 @@ func TestTheModelThatAnsweredIsReportedAndNotTheOneAskedFor(t *testing.T) {
 		ok(w, `{"model":"minimax/minimax-m2.7:free","choices":[{"message":{"content":"ok"}}]}`)
 	})
 
-	res, err := Check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3:free"})
+	res, err := Check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3:free"}, direct)
 	if err != nil {
 		t.Fatalf("Check(): %v", err)
 	}
@@ -85,7 +91,7 @@ func TestAFaultInsideATwoHundredIsStillAFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			serve(t, func(w http.ResponseWriter, _ *http.Request) { ok(w, tc.body) })
 
-			_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"})
+			_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 			if err == nil {
 				t.Fatal("Check() = nil, want the fault reported")
 			}
@@ -116,7 +122,7 @@ func TestEachRefusalSaysWhichKindItWas(t *testing.T) {
 				io.WriteString(w, tc.body)
 			})
 
-			_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"})
+			_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 			if err == nil {
 				t.Fatalf("Check() = nil, want a refusal")
 			}
@@ -135,7 +141,7 @@ func TestABodyThatIsNotJSONIsQuotedRatherThanSummarised(t *testing.T) {
 		io.WriteString(w, "<html><body>upstream connect error</body></html>")
 	})
 
-	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"})
+	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 	if err == nil {
 		t.Fatal("Check() = nil, want the page reported")
 	}
@@ -149,14 +155,14 @@ func TestAGatewayThatAnsweredNothingIsAFailure(t *testing.T) {
 		ok(w, `{"model":"m","choices":[]}`)
 	})
 
-	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}); err == nil {
+	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct); err == nil {
 		t.Error("Check() = nil, want an empty reply refused")
 	}
 }
 
 func TestThereIsNothingToCheckWithoutAKey(t *testing.T) {
 	// No server: reaching one at all would be the bug.
-	if _, err := Check(t.Context(), Settings{Model: "m"}); err == nil {
+	if _, err := Check(t.Context(), Settings{Model: "m"}, direct); err == nil {
 		t.Error("Check() = nil, want a refusal before any request")
 	}
 }
@@ -171,7 +177,7 @@ func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 		io.WriteString(w, `{"error":{"code":429,"message":"Rate limit exceeded, free-models-per-day"}}`)
 	})
 
-	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"})
+	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 	if !errors.Is(err, ErrRateLimited) {
 		t.Errorf("Check() = %v, want it to satisfy errors.Is(ErrRateLimited)", err)
 	}
@@ -186,7 +192,7 @@ func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 		io.WriteString(w, `{"error":{"code":401,"message":"No auth credentials found"}}`)
 	})
-	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}); errors.Is(err, ErrRateLimited) {
+	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct); errors.Is(err, ErrRateLimited) {
 		t.Error("a rejected key was reported as a rate limit")
 	}
 }

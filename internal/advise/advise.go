@@ -175,6 +175,12 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	if err != nil {
 		return err
 	}
+	// Instance-wide, unlike the key: how this machine reaches the internet is one fact about
+	// the machine, not one per account.
+	via, err := a.Store.Proxy(ctx)
+	if err != nil {
+		return err
+	}
 	question, err := User(set.About, rh, reminders)
 	if err != nil {
 		return err
@@ -183,7 +189,7 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	ctx, cancel := context.WithTimeout(ctx, askTimeout)
 	defer cancel()
 
-	reply, res, err := openrouter.Ask(ctx, set, System(), question, budget(len(reminders)))
+	reply, res, err := openrouter.Ask(ctx, set, via, System(), question, budget(len(reminders)))
 	if err != nil {
 		return err
 	}

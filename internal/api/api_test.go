@@ -502,9 +502,14 @@ func TestAdminRoutesAreForAdministrators(t *testing.T) {
 		{"PUT", "/api/admin/relay"},
 		{"DELETE", "/api/admin/relay"},
 		{"POST", "/api/admin/relay/test"},
+		{"GET", "/api/admin/proxy"},
+		{"PUT", "/api/admin/proxy"},
+		{"PATCH", "/api/admin/proxy"},
+		{"DELETE", "/api/admin/proxy"},
+		{"POST", "/api/admin/proxy/test"},
 	} {
 		var body any
-		if tc.method == "PUT" || tc.method == "POST" {
+		if tc.method == "PUT" || tc.method == "POST" || tc.method == "PATCH" {
 			body = map[string]any{}
 		}
 		resp := h.do(tc.method, tc.path, body)
@@ -1048,5 +1053,109 @@ func TestTheCompanionStatusCarriesNoCounts(t *testing.T) {
 		if bytes.Contains(body, []byte(forbidden)) {
 			t.Errorf("the companion status carries %s, which is a count: %s", forbidden, body)
 		}
+	}
+}
+
+func TestAProxyTokenNeverComesBackOut(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("admin", store.RoleAdmin)
+
+	saved := h.do("PUT", "/api/admin/proxy", map[string]any{
+		"kind": "proxio", "url": "https://proxio.example.com", "token": "px_secret",
+	})
+	defer saved.Body.Close()
+	if saved.StatusCode != http.StatusOK {
+		t.Fatalf("PUT = %s", saved.Status)
+	}
+
+	resp := h.do("GET", "/api/admin/proxy", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if bytes.Contains(body, []byte("px_secret")) {
+		t.Errorf("the proxy token reached the client: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"token_set":true`)) {
+		t.Errorf("token_set missing, so the form cannot tell whether one is stored: %s", body)
+	}
+}
+
+// Correcting an address must not mean retyping a secret nobody can read off the screen — but
+// only while it still names the same endpoint, or a proxio token would be carried to a socks
+// host it was never meant for.
+func TestSavingAProxyWithoutATokenKeepsItOnlyForTheSameEndpoint(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("admin", store.RoleAdmin)
+
+	h.do("PUT", "/api/admin/proxy", map[string]any{
+		"kind": "proxio", "url": "https://proxio.example.com", "token": "px_secret",
+	}).Body.Close()
+
+	h.do("PUT", "/api/admin/proxy", map[string]any{
+		"kind": "proxio", "url": "https://proxio.example.com", "token": "",
+	}).Body.Close()
+	set, err := h.store.Proxy(h.Context())
+	if err != nil {
+		t.Fatalf("Proxy(): %v", err)
+	}
+	if set.Token != "px_secret" {
+		t.Errorf("token = %q, want the stored one kept", set.Token)
+	}
+
+	// A different endpoint entirely, with no token: refused rather than given the old one.
+	resp := h.do("PUT", "/api/admin/proxy", map[string]any{
+		"kind": "socks5", "url": "socks5://elsewhere.example.com:1080",
+		"username": "misha", "token": "",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %s, want 400 rather than a token carried somewhere else", resp.Status)
+	}
+	if set, _ := h.store.Proxy(h.Context()); set.URL != "https://proxio.example.com" {
+		t.Errorf("proxy = %+v, want the refused save to have changed nothing", set)
+	}
+}
+
+// Off keeps everything, so switching back on is a press rather than typing a secret again.
+func TestAProxyIsSwitchedOffWithoutBeingForgotten(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("admin", store.RoleAdmin)
+	h.do("PUT", "/api/admin/proxy", map[string]any{
+		"kind": "proxio", "url": "https://proxio.example.com", "token": "px_secret",
+	}).Body.Close()
+
+	resp := h.do("PATCH", "/api/admin/proxy", map[string]any{"enabled": false})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH = %s", resp.Status)
+	}
+	var got struct {
+		Enabled  bool `json:"enabled"`
+		TokenSet bool `json:"token_set"`
+	}
+	decodeBody(t, resp, &got)
+	if got.Enabled {
+		t.Error("still on after being switched off")
+	}
+	if !got.TokenSet {
+		t.Error("switching off lost the credential")
+	}
+
+	// Saving is how it comes back on.
+	h.do("PUT", "/api/admin/proxy", map[string]any{
+		"kind": "proxio", "url": "https://proxio.example.com", "token": "",
+	}).Body.Close()
+	if set, _ := h.store.Proxy(h.Context()); !set.Enabled {
+		t.Error("saving did not switch it back on")
+	}
+}
+
+func TestTestingAProxyBeforeSavingOneIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("admin", store.RoleAdmin)
+
+	resp := h.do("POST", "/api/admin/proxy/test", map[string]any{})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %s, want 400", resp.Status)
 	}
 }

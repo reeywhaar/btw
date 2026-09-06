@@ -16,6 +16,7 @@ reading this in a year. Each one below earns its place.
 | `github.com/spf13/cobra` | v1.10.2 | `serve`, `invite`, `healthcheck` — subcommands rather than flags, so `docker exec btw invite` reads as what it does |
 | `modernc.org/sqlite` | v1.57.0 | Pure Go. No cgo means `CGO_ENABLED=0`, a static binary, and an Alpine image with no toolchain in it |
 | `golang.org/x/crypto` | v0.55.0 | bcrypt, cost 12 |
+| `golang.org/x/net` | v0.58.0 | `proxy.SOCKS5`, for one of the two kinds of [proxy](proxies.md). Taken rather than hand-rolled: RFC 1928's username/password sub-negotiation is a short protocol that is easy to write and easy to write *almost* correctly, and the failure mode is a credential going out wrong against an endpoint nobody here controls |
 
 Three direct dependencies. That is the whole list and it should stay short enough to read.
 

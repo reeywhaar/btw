@@ -17,6 +17,7 @@ internal/
   pick/              what the nudge carries — pure
   webpush/           VAPID, RFC 8291 encryption, one POST
   openrouter/        one question, put to the model an account has a key for
+  proxy/             the two ways of reaching it from somewhere else
   advise/            asks the companion about somebody's reminders — the impure half
   nudge/             the scheduler: the impure half
   backup/            snapshots the databases and posts them to a backup agent
@@ -147,6 +148,19 @@ store touches the network.
 Its tests hold a real conversation with a server started on a loopback port, for the reason
 `internal/mail`'s do. A mocked `http.Client` would assert that `net/http` was called; what is
 worth asserting is that a fault arriving inside a `200` is still a failure.
+
+## `internal/proxy`
+
+The two kinds of proxy and the dialing of them. See [proxies.md](proxies.md).
+
+Knows nothing about btw: it takes an `*http.Request` and settings, and hands back a response.
+That is what lets its tests be a real proxio and a real SOCKS5 server over loopback sockets
+rather than a mocked `http.Client` — which would assert that `net/http` was called, when what is
+worth asserting is that a POST body survives the trip and that a credential never reaches a log
+line.
+
+Only `internal/openrouter` sends through it, because it is the only thing here that reaches the
+open internet at all.
 
 ## `internal/advise`
 

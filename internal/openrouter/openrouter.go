@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"btw/internal/proxy"
 )
 
 // Endpoint is OpenRouter's chat completions route.
@@ -117,7 +119,7 @@ type Result struct {
 // The same argument as the relay's test send: an account setting this up gets it wrong two or
 // three times, and each correction should be a form field and a press rather than a support
 // question.
-func Check(ctx context.Context, set Settings) (Result, error) {
+func Check(ctx context.Context, set Settings, via proxy.Settings) (Result, error) {
 	if !set.Configured() {
 		return Result{}, errors.New("there is no key to check")
 	}
@@ -133,7 +135,7 @@ func Check(ctx context.Context, set Settings) (Result, error) {
 			{"role": "user", "content": "Reply with the single word: ok"},
 		},
 	}
-	return post(ctx, set.APIKey, body)
+	return post(ctx, set.APIKey, body, via)
 }
 
 // Ask puts a prompt to the configured model and returns what it said.
@@ -144,7 +146,7 @@ func Check(ctx context.Context, set Settings) (Result, error) {
 // those advertise `response_format` without `structured_outputs` — asking for a schema they
 // cannot honour gets prose back from a request that looked like it demanded otherwise. The
 // caller parses leniently for the same reason.
-func Ask(ctx context.Context, set Settings, system, user string, maxTokens int) (string, Result, error) {
+func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user string, maxTokens int) (string, Result, error) {
 	if !set.Configured() {
 		return "", Result{}, errors.New("there is no companion to ask")
 	}
@@ -172,7 +174,7 @@ func Ask(ctx context.Context, set Settings, system, user string, maxTokens int) 
 		},
 	}
 
-	res, err := post(ctx, set.APIKey, body)
+	res, err := post(ctx, set.APIKey, body, via)
 	if err != nil {
 		return "", Result{}, err
 	}
@@ -207,7 +209,7 @@ type fault struct {
 	Message string `json:"message"`
 }
 
-func post(ctx context.Context, key string, body map[string]any) (Result, error) {
+func post(ctx context.Context, key string, body map[string]any, via proxy.Settings) (Result, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return Result{}, fmt.Errorf("encode request: %w", err)
@@ -223,7 +225,10 @@ func post(ctx context.Context, key string, body map[string]any) (Result, error) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	resp, err := http.DefaultClient.Do(req)
+	// Through a proxy when one is configured and switched on, and straight out otherwise. The
+	// decision is entirely proxy.Send's; nothing here needs to know which happened, which is
+	// what keeps the two paths from drifting apart.
+	resp, err := proxy.Send(ctx, req, via)
 	if err != nil {
 		return Result{}, fmt.Errorf("reach the gateway: %w", err)
 	}
