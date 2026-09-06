@@ -25,6 +25,12 @@
    * spending it on "this browser cannot receive nudges" would make it mean less where it
    * matters. 4.81:1 on the light ground, 9.16:1 on the dark one. */
   --color-warn: #b45309;
+  /* The third of a trio, and the only one that reports rather than warns. It exists because
+   * a state with two bad answers and no good one reads as broken whenever it is not — the
+   * companion working is a thing worth being able to see at a glance, not merely the absence
+   * of a triangle. Nothing acts on it and nothing is coloured by it but an icon.
+   * 4.80:1 on the light ground, 11.3:1 on the dark one. */
+  --color-ok: #15803d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,6 +44,7 @@
     --color-line-strong: #4a4a50;
     --color-accent: #f97362;
     --color-warn: #f59e0b;
+    --color-ok: #4ade80;
   }
 }
 

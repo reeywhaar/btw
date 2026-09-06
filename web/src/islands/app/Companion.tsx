@@ -17,6 +17,9 @@ import { Field } from "@app/components/Field";
 import { Note } from "@app/components/Note";
 import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
+import { CheckIcon } from "@app/components/icons/CheckIcon";
+import { CrossCircleIcon } from "@app/components/icons/CrossCircleIcon";
+import { WarningIcon } from "@app/components/icons/WarningIcon";
 import { TextArea } from "@app/components/TextArea";
 import { TextField } from "@app/components/TextField";
 
@@ -107,13 +110,39 @@ export function Companion() {
  * No counts, deliberately: "some of them" rather than "5 of 7". See docs/api_design.md.
  */
 function AdviceStatus({ advice }: { advice: Advice }) {
-  const said = {
-    none: "It has not been asked yet.",
-    all: "It has an opinion about all your reminders.",
-    some: "It has an opinion about some of your reminders.",
-    limited:
-      "Its key is out of requests for now. It will try again on its own.",
-    failed: "The last time it was asked, something went wrong.",
+  // The mark and the sentence together, so neither has to be read to understand the other.
+  // The icons are aria-hidden — a screen reader announcing both would say it twice.
+  const { Mark, tone, said } = {
+    none: {
+      // Nothing has happened yet, which is neither good nor bad. A mark here would have to
+      // pick one of those, and both would be wrong.
+      Mark: null,
+      tone: "",
+      said: "It has not been asked yet.",
+    },
+    all: {
+      Mark: CheckIcon,
+      tone: "text-ok",
+      said: "It has an opinion about all your reminders.",
+    },
+    some: {
+      Mark: WarningIcon,
+      tone: "text-warn",
+      said: "It has an opinion about some of your reminders.",
+    },
+    limited: {
+      Mark: WarningIcon,
+      tone: "text-warn",
+      said: "Its key is out of requests for now. It will try again on its own.",
+    },
+    failed: {
+      // The refusal colour, and only here. A quota takes the caution above instead: the
+      // accent meaning "this was rejected" everywhere else is what makes it worth reading
+      // when it does appear.
+      Mark: CrossCircleIcon,
+      tone: "text-accent",
+      said: "The last time it was asked, something went wrong.",
+    },
   }[advice.status];
 
   // The moment that answers "is this current" — which is the last *attempt* when one failed,
@@ -130,6 +159,11 @@ function AdviceStatus({ advice }: { advice: Advice }) {
       control={<span className="text-sm text-muted">{ago(at)}</span>}
     >
       <Note>
+        {Mark && (
+          // Drawn at 1em and nudged onto the baseline, so it sits on the line of the sentence
+          // rather than floating above it the way a fixed-size icon does.
+          <Mark className={`mr-1.5 inline-block align-[-0.1em] ${tone}`} />
+        )}
         {said}
         {advice.stale && advice.status !== "none" && (
           <> Something has changed since, so it will look again shortly.</>
