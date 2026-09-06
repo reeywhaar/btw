@@ -81,5 +81,8 @@ func (s *Server) patchRhythm(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.ClearScheduledNudge(r.Context(), p.ID); err != nil {
 		s.log.Error("could not clear the scheduled nudge", "principal", p.ID, "err", err)
 	}
+	// The waking window bounds which hours a companion's slots can ever be delivered in, so
+	// moving it makes every answer about this person worth asking for again.
+	s.adviceStale(r, p.ID)
 	s.getRhythm(w, r)
 }

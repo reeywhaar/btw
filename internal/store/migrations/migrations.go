@@ -87,4 +87,5 @@ var Derived = []Migration{
 	derivedDropSlots,
 	derivedPendingNudge,
 	derivedBackupState,
+	derivedAdvice,
 }

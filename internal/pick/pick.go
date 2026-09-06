@@ -27,6 +27,32 @@ import (
 // get.
 const StalenessCap = 4.0
 
+// What the companion's advice does to a weight.
+//
+// A multiplier, never a replacement, and never zero. The companion moves a reminder around
+// somebody's week; it does not get to remove one. Silencing is a person's decision and has
+// exactly one expression — priority zero — and a model that could reach the same outcome by
+// saying "no good hours" would be a second, invisible way to make a reminder stop arriving.
+//
+// The numbers are ratios and only ratios matter. In its hours a reminder is five times as
+// likely as one outside them, twelve times if that one wants full attention. Staleness still
+// runs to four and keeps climbing underneath, so a reminder the companion never finds a moment
+// for still surfaces — later, and by a route nothing here has to special-case.
+const (
+	// InSlot is the boost while now falls inside one of the reminder's windows.
+	InSlot = 3.0
+
+	// OutOfSlot damps a reminder outside all of them. Gently: the companion is guessing from a
+	// paragraph somebody wrote about themselves, and a wrong guess should cost a nudge its
+	// place in the queue rather than its place in the product.
+	OutOfSlot = 0.6
+
+	// OutOfSlotExclusive damps harder for something wanting full attention. Suggesting a show
+	// at a bad moment costs nothing — it is ignored, and ignoring is free. Suggesting an hour
+	// of concentration at a bad moment is the notification people turn off.
+	OutOfSlotExclusive = 0.25
+)
+
 // nominalInterval is the denominator for a reminder that states no floor of its own. It
 // decides nothing about eligibility — only how quickly one reminder overtakes another.
 const nominalInterval = 24 * time.Hour
@@ -42,7 +68,12 @@ const nominalInterval = 24 * time.Hour
 // nothing at all: reaching for the next-least-ineligible thing, or repeating this
 // morning's, is how a notification channel gets turned off for good by somebody who was
 // otherwise happy with it.
-func Pick(candidates []store.Candidate, now time.Time, exclude, seed string) (store.Candidate, bool) {
+//
+// `local` is where `now` falls in the person's own week — the day, Monday-origin, and the
+// minute since their local midnight. It arrives already converted because internal/rhythm is
+// the one place in the program that knows what time it is anywhere; this function compares
+// integers and stays a pure function of its arguments.
+func Pick(candidates []store.Candidate, now time.Time, local Moment, exclude, seed string) (store.Candidate, bool) {
 	// Silenced reminders are dropped here and not merely weighted to zero. The store filters
 	// them too, but the rule belongs to this function: the uniform fallback below would
 	// otherwise draw one, and "zero means never" would hold only as long as every caller
@@ -73,7 +104,7 @@ func Pick(candidates []store.Candidate, now time.Time, exclude, seed string) (st
 	weights := make([]float64, len(eligible))
 	var total float64
 	for i, c := range eligible {
-		weights[i] = Weight(c, now)
+		weights[i] = Weight(c, now, local)
 		total += weights[i]
 	}
 
@@ -103,7 +134,7 @@ func Pick(candidates []store.Candidate, now time.Time, exclude, seed string) (st
 
 // Weight is how likely one reminder is to be drawn, relative to the others.
 //
-//	weight = priority × min(cap, elapsed / min_interval)
+//	weight = priority × min(cap, elapsed / min_interval) × advice
 //
 // The multiplier is what makes this not a loop, and it needs no separate rule to stop one.
 // The moment a reminder is nudged its elapsed time is zero, so its weight is zero — and it
@@ -114,14 +145,18 @@ func Pick(candidates []store.Candidate, now time.Time, exclude, seed string) (st
 //
 // Priority is a probability rather than an order. One at 90 arrives more often than one at
 // 10 and never silences it, which a sort would fail to give.
-func Weight(c store.Candidate, now time.Time) float64 {
+func Weight(c store.Candidate, now time.Time, local Moment) float64 {
 	if c.Priority <= 0 {
 		return 0
 	}
 	// Never nudged counts as maximally stale: a reminder just written down should arrive
 	// soon, which is also the fastest way for somebody to find out the thing works.
+	//
+	// Advice still applies. It is tempting to let a new reminder skip it and arrive at once,
+	// but the first arrival is the one most worth placing well — and maximal staleness already
+	// puts it far enough ahead that the damping only decides which hour, not whether.
 	if c.LastNudgedAt.IsZero() {
-		return float64(c.Priority) * StalenessCap
+		return float64(c.Priority) * StalenessCap * Advice(c, local)
 	}
 
 	// A reminder with no floor of its own is still ordered by how long it has waited — the
@@ -137,7 +172,36 @@ func Weight(c store.Candidate, now time.Time) float64 {
 	if staleness < 0 {
 		staleness = 0
 	}
-	return float64(c.Priority) * staleness
+	return float64(c.Priority) * staleness * Advice(c, local)
+}
+
+// Moment is where an instant falls in somebody's week.
+//
+// Day is 0 for Monday through 6 for Sunday, matching [store.Slot]. Minute is since local
+// midnight, the same units a rhythm's waking window uses.
+type Moment struct {
+	Day    int
+	Minute int
+}
+
+// Advice is what the companion's opinion does to one reminder's weight, right now.
+//
+// Exactly 1 when it has said nothing, which is what makes the whole feature optional at the
+// level of one reminder rather than one account: a reminder written a minute ago, before the
+// next round of questions, weighs precisely what it weighed before any of this existed.
+func Advice(c store.Candidate, local Moment) float64 {
+	if !c.Advised {
+		return 1
+	}
+	for _, s := range c.Slots {
+		if s.Covers(local.Day, local.Minute) {
+			return InSlot
+		}
+	}
+	if c.Exclusive {
+		return OutOfSlotExclusive
+	}
+	return OutOfSlot
 }
 
 func seedFrom(s string) uint64 {

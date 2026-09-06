@@ -1,0 +1,186 @@
+// Package advise asks each person's companion what it makes of their reminders, and records
+// the answer for the weighting to read.
+//
+// The impure half of the companion, as internal/nudge is the impure half of the scheduling: it
+// reads a clock, opens a socket and writes to a database. What it learns is consumed by
+// internal/pick, which stays a pure function of what it is handed.
+//
+// # Why a flag and a loop rather than a write-through
+//
+// The obvious design asks the moment anything changes. It is wrong twice. Somebody writing
+// down six things in a minute would be six questions, and a free key allows fifty in a day —
+// so the burst that most deserves one answer is the one that exhausts the quota. And a
+// question asked inside somebody's save makes their save as slow as a model's thinking, for a
+// result nothing is waiting on.
+//
+// So every write that could change an answer only says so, and this loop decides when to act.
+// The interval is the throttle, exactly as it is for the backup pusher, and it is doing more
+// work here: it collapses a burst of edits into one question and bounds the requests a broken
+// key can spend.
+package advise
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"btw/internal/openrouter"
+	"btw/internal/store"
+)
+
+// Every is how often the loop looks for somebody whose advice is stale.
+//
+// Half an hour, and the number comes from the quota rather than from taste. One person can
+// cost at most one question per pass, so a free key — fifty a day until credit has ever been
+// bought — survives a person who edits something in every single window, forty-eight times
+// over. At fifteen minutes the same person would exhaust it before the evening.
+//
+// It is also long enough to be the collapse that matters: somebody sitting down to write out
+// their week is one question, half an hour later, holding all of it.
+const Every = 30 * time.Minute
+
+// askTimeout bounds one question. Generous, because a reasoning model on a free endpoint
+// queues, and an answer that arrives late is still worth having when nothing is waiting on it.
+const askTimeout = 3 * time.Minute
+
+// Adviser keeps everybody's advice roughly up to date.
+type Adviser struct {
+	Store *store.Store
+	Log   *slog.Logger
+
+	// Every defaults to the constant above. A field only so a test can drive the loop without
+	// waiting half an hour for it.
+	Every time.Duration
+}
+
+// Run works until the context is done.
+//
+// The first pass is immediate rather than one interval in, for the reason the backup pusher's
+// is: a process that has just started may be running against a derived.db that was thrown
+// away, and everybody's advice with it. Waiting half an hour to find that out is half an hour
+// of weighting nothing.
+func (a *Adviser) Run(ctx context.Context) {
+	if a.Every <= 0 {
+		a.Every = Every
+	}
+	a.Log.Info("advising", "at_most_every", a.Every)
+
+	for {
+		a.Once(ctx)
+
+		timer := time.NewTimer(a.Every)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// Once is one pass over everybody who has a companion.
+//
+// Exported so a test can drive a single pass without waiting on a clock.
+func (a *Adviser) Once(ctx context.Context) {
+	people, err := a.Store.PrincipalsWithCompanion(ctx)
+	if err != nil {
+		a.Log.Error("could not list companions", "err", err)
+		return
+	}
+	for _, id := range people {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		stale, err := a.Store.AdviceIsStale(ctx, id)
+		if err != nil {
+			a.Log.Error("could not read advice state", "principal", id, "err", err)
+			continue
+		}
+		if !stale {
+			continue
+		}
+		if err := a.advise(ctx, id); err != nil {
+			// Recorded against the account as well as logged, so that somebody whose key
+			// stopped working can be told rather than left wondering why nothing improves.
+			// The flag stays set, so the next pass tries again.
+			a.Log.Warn("could not advise", "principal", id, "err", err)
+			if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error()); err != nil {
+				a.Log.Error("could not record an advice failure", "principal", id, "err", err)
+			}
+		}
+	}
+}
+
+// advise is one question about one person.
+func (a *Adviser) advise(ctx context.Context, principalID string) error {
+	set, err := a.Store.Companion(ctx, principalID)
+	if err != nil {
+		return err
+	}
+	if !set.Configured() {
+		return nil
+	}
+
+	reminders, err := a.Store.Reminders(ctx, principalID, false)
+	if err != nil {
+		return err
+	}
+	if len(reminders) == 0 {
+		// Nothing to ask about, and asking anyway would spend a request to be told so. Marked
+		// answered rather than left stale, or an account with no reminders would be revisited
+		// every single pass forever.
+		return a.Store.RecordAdvised(ctx, principalID, a.Store.Now())
+	}
+
+	rh, err := a.Store.Rhythm(ctx, principalID)
+	if err != nil {
+		return err
+	}
+	question, err := User(set.About, rh, reminders)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, askTimeout)
+	defer cancel()
+
+	reply, res, err := openrouter.Ask(ctx, set, System(), question, budget(len(reminders)))
+	if err != nil {
+		return err
+	}
+
+	ids := make([]string, len(reminders))
+	known := make(map[string]bool, len(reminders))
+	for i, r := range reminders {
+		ids[i] = r.ID
+		known[r.ID] = true
+	}
+
+	advice, dropped := parse(reply, known)
+	if err := a.Store.SetAdvice(ctx, ids, advice); err != nil {
+		return err
+	}
+	if err := a.Store.RecordAdvised(ctx, principalID, a.Store.Now()); err != nil {
+		return err
+	}
+
+	// The reminder text is not logged and neither is what was said about it — the same rule
+	// the nudge log follows, and for the same reason. The counts are what an operator needs.
+	a.Log.Info("advised", "principal", principalID, "model", res.Model,
+		"reminders", len(reminders), "answered", len(advice), "dropped", dropped,
+		"tokens", res.Tokens)
+	return nil
+}
+
+// budget is how much room the answer is given.
+//
+// Scaled by the question, because the answer is one object per reminder and a fixed ceiling is
+// either wasteful for somebody with three or a truncation for somebody with forty. The floor
+// covers a reasoning model's thinking, which counts against the same number even though it is
+// excluded from what comes back.
+func budget(reminders int) int {
+	return min(2000+300*reminders, 16000)
+}

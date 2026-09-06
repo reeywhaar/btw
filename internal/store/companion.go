@@ -82,3 +82,26 @@ func (s *Store) ClearCompanion(ctx context.Context, principalID string) error {
 	}
 	return nil
 }
+
+// PrincipalsWithCompanion lists the accounts that have configured one.
+//
+// Ordered by id, which is chronological, so a pass works through people in the order they
+// joined rather than in whatever order the page cache happened to hold.
+func (s *Store) PrincipalsWithCompanion(ctx context.Context) ([]string, error) {
+	rows, err := s.main.QueryContext(ctx,
+		`SELECT principal_id FROM companion WHERE api_key != '' ORDER BY principal_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list companions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("read companion row: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

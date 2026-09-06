@@ -59,6 +59,7 @@ func (s *Server) createReminder(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.adviceStale(r, principal(r).ID)
 	writeJSON(w, http.StatusCreated, reminderJSON(rem))
 }
 
@@ -97,6 +98,8 @@ func (s *Server) updateReminder(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	// The text or the note changed, and the note is most of what the companion has to go on.
+	s.adviceStale(r, principal(r).ID)
 	writeJSON(w, http.StatusOK, reminderJSON(updated))
 }
 
@@ -112,6 +115,7 @@ func (s *Server) endReminder(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.adviceStale(r, principal(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -125,6 +129,7 @@ func (s *Server) reviveReminder(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.adviceStale(r, principal(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -138,5 +143,6 @@ func (s *Server) deleteReminder(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.adviceStale(r, principal(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -19,6 +19,8 @@ minute on a particular device. Reminders persist; nudges happen.
 | **device** | A browser that has agreed to receive nudges. What a person sees in settings |
 | **principal** | An account, admin or user |
 | **companion** | The model an account gave a key for, and what it is told about them |
+| **advice** | What the companion said about one reminder: its hours, and whether it is exclusive |
+| **slot** (companion) | One window of advice: a day and a range of minutes, in local time |
 | **done** | Finished with, because it was done |
 | **drop** | Finished with, because it turned out not to be wanted |
 

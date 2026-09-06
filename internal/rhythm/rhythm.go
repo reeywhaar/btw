@@ -55,13 +55,26 @@ func Location(r store.Rhythm) *time.Location {
 	return loc
 }
 
+// Local is where an instant falls in somebody's own week: the day, counted from Monday, and
+// the minute since their local midnight.
+//
+// This is the conversion the package doc means. Everything downstream — a waking window, a
+// companion's slots — is integers in these units, compared against each other, so no other
+// part of the program has to know what time it is anywhere.
+func Local(r store.Rhythm, at time.Time) (day, minute int) {
+	t := at.In(Location(r))
+	// time.Weekday counts from Sunday. A rhythm and a slot both count from Monday, because
+	// that is where the week starts for the person being asked about it, and converting here
+	// means the origin is stated once rather than assumed at each comparison.
+	return (int(t.Weekday()) + 6) % 7, t.Hour()*60 + t.Minute()
+}
+
 // Awake reports whether `at` falls inside the person's waking hours.
 func Awake(r store.Rhythm, at time.Time) bool {
 	if !r.WindowEnabled {
 		return true
 	}
-	local := at.In(Location(r))
-	minute := local.Hour()*60 + local.Minute()
+	_, minute := Local(r, at)
 	return minute >= r.WakeMinute && minute < r.SleepMinute
 }
 

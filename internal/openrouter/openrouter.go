@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -88,6 +89,13 @@ type Result struct {
 	// Tokens is what the exchange cost, so a test press says something about the next
 	// thousand.
 	Tokens int
+
+	// Truncated is whether the model ran out of ceiling mid-answer.
+	Truncated bool
+
+	// reply is unexported so that [Check]'s caller cannot come to depend on the word the model
+	// happened to say, while [Ask]'s gets it through a return value that means it.
+	reply string
 }
 
 // Check asks the model to say one word, and reports what came back.
@@ -118,6 +126,55 @@ func Check(ctx context.Context, set Settings) (Result, error) {
 		},
 	}
 	return post(ctx, set.APIKey, body)
+}
+
+// Ask puts a prompt to the configured model and returns what it said.
+//
+// The general form of [Check]: same credential, same error handling, a real answer wanted.
+//
+// JSON mode rather than a strict schema, because the default model is a `:free` variant and
+// those advertise `response_format` without `structured_outputs` — asking for a schema they
+// cannot honour gets prose back from a request that looked like it demanded otherwise. The
+// caller parses leniently for the same reason.
+func Ask(ctx context.Context, set Settings, system, user string, maxTokens int) (string, Result, error) {
+	if !set.Configured() {
+		return "", Result{}, errors.New("there is no companion to ask")
+	}
+
+	body := map[string]any{
+		"model":      set.Model,
+		"max_tokens": maxTokens,
+		// A reasoning model otherwise leaks its thinking into the content, which is the single
+		// likeliest reason a JSON answer fails to parse.
+		"reasoning": map[string]any{"exclude": true},
+		// Low, not zero: this is extraction, not invention.
+		"temperature": 0.2,
+		// Fresh every time, and deliberately not a constant.
+		//
+		// A fixed seed would make the answer reproducible, which sounds like a virtue and is
+		// the opposite of one here: the same question is asked again whenever anything changes,
+		// and a model that put a reminder in the wrong half of the week would put it there
+		// again, identically, forever. A new draw each time is the only thing that lets a bad
+		// answer be replaced by a better one without the question itself changing.
+		"seed":            rand.Int64(),
+		"response_format": map[string]any{"type": "json_object"},
+		"messages": []map[string]string{
+			{"role": "system", "content": system},
+			{"role": "user", "content": user},
+		},
+	}
+
+	res, err := post(ctx, set.APIKey, body)
+	if err != nil {
+		return "", Result{}, err
+	}
+	if res.Truncated {
+		// Named rather than left to the parser, because a truncated answer is a torn-off JSON
+		// object and "unexpected end of input" sends somebody looking at the prompt when the
+		// fix is a bigger ceiling.
+		return "", res, errors.New("the answer was cut off before it finished; allow more tokens")
+	}
+	return res.reply, res, nil
 }
 
 type completion struct {
@@ -192,8 +249,10 @@ func post(ctx context.Context, key string, body map[string]any) (Result, error) 
 	}
 
 	return Result{
-		Model:  parsed.Model,
-		Tokens: parsed.Usage.TotalTokens,
+		Model:     parsed.Model,
+		Tokens:    parsed.Usage.TotalTokens,
+		Truncated: parsed.Choices[0].FinishReason == "length",
+		reply:     strings.TrimSpace(parsed.Choices[0].Message.Content),
 	}, nil
 }
 

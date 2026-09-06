@@ -3,10 +3,10 @@
 btw runs no model. It puts a question to one an account has a key for, through OpenRouter, and
 everything here is about where that key lives and what the model is told.
 
-Nothing asks a question yet. What exists is the configuration and a button that proves it
-works — built first on purpose, because a feature whose credential is wrong fails in a
-background loop at three in the morning, and the only way to find that out should be a form
-field and a press.
+What it is asked, and what is done with the answer, is below. The configuration and its test
+button were built first on purpose: a feature whose credential is wrong fails in a background
+loop at three in the morning, and the only way to find that out should be a form field and a
+press.
 
 ## The companion is an account's, not the instance's
 
@@ -117,25 +117,89 @@ token, that a fault inside a `200` is still a failure, that the model which answ
 reported rather than the one asked for, and that a proxy's HTML error page survives to the
 caller instead of being summarised into "bad gateway".
 
+## What it is asked
+
+Once per person, not once per reminder. One question carries the whole open list, along with
+what they wrote about themselves and the hours they are reachable in, and the answer comes back
+as one entry per reminder. Asking separately would be one request each against a quota of
+fifty a day, and would also throw away the only context that makes the answers coherent — that
+these forty things belong to one week.
+
+The prompt is a **template constant** in `internal/advise`, not string-building. It is the
+product here: what the model is told is the whole of what distinguishes good advice from a
+guess, so it is written as prose in one block that reads as what the model reads, and a change
+to it is a diff somebody can judge without running anything.
+
+Three things in it are load-bearing and have tests asserting they are still said.
+
+**That the answer does not decide whether a reminder is shown.** Without that sentence a model
+reads the job as "when is this due", which is the one question btw exists to refuse.
+
+**That naming no slots is a real answer.** Otherwise a model with no opinion invents one rather
+than admitting it, and an invented window is worse than none.
+
+**Be generous with the slots.** The first version answered two or three windows for something
+somebody wanted daily, because nothing told it how many to give.
+
+The categories are **glossed rather than listed**, and the glosses carry scheduling meaning a
+bare noun loses: *errands* is "bound by opening hours" and *chores* is "bound by nothing but
+being awake", which is the whole reason they are two words.
+
+### The answer is read leniently
+
+A `:free` model in JSON mode is a request, not a guarantee. The parser accepts a bare array as
+well as the `{"results": []}` wrapper, strips markdown fences, finds the object inside a
+sentence of preamble, reads `Monday` and `mon` alike, and takes `24:00` to mean midnight.
+
+One malformed slot costs that slot and not the answer. Refusing the whole reply over one
+unreadable window would throw away nineteen good ones and leave the account no better off than
+before it configured a key.
+
+**An id that was not asked about is dropped.** It is the one mistake here that could reach
+another person's row, and a model that echoes an id back wrongly — or helpfully invents one —
+must not be able to attach advice to it.
+
+## When it is asked
+
+Every write that could change an answer sets a flag, and a loop decides when to act.
+
+Marked stale by: a reminder written, described, ended, revived or deleted; an account's `about`
+rewritten; its rhythm moved, because the waking window bounds which hours a slot can ever be
+delivered in. Not by a nudge going out — that changes when a reminder was last raised, not what
+it is about.
+
+The obvious alternative, asking the moment anything changes, is wrong twice. Somebody writing
+down six things in a minute would be six questions, and a free key allows fifty in a day — so
+the burst that most deserves a single answer is the one that exhausts the quota. And a question
+asked inside somebody's save makes their save as slow as a model's thinking, for a result
+nothing is waiting on.
+
+**Half an hour**, and the number comes from the quota rather than from taste. One person costs
+at most one question per pass, so fifty a day survives somebody who edits something in every
+single window, forty-eight times over. At fifteen minutes the same person would exhaust it
+before the evening.
+
+## What the answer does
+
+It is the last term in the weight, and only a multiplier. The numbers, and why it can never be
+zero, are in [nudges.md](nudges.md#the-companions-advice-is-the-last-term-and-only-a-multiplier).
+
+The short of it: a reminder inside the hours it was given is five times as likely as one
+outside them, and **a reminder nothing has been said about weighs exactly what it always did**.
+That is what makes this optional at the level of one reminder rather than one account — a
+reminder written a minute ago, before the next round of questions, is unaffected.
+
 ## What this does not do yet
 
-**Nothing asks the model anything.** The next step is the metadata: what the companion says
-about a reminder — when it would land well, what it is about, whether it wants somebody's full
-attention — and how that becomes a multiplier on the weight
-[nudges.md](nudges.md) already computes. It multiplies rather than replaces, so a reminder with
-no metadata weighs exactly what it weighs today and the feature stays optional at the level of
-one reminder rather than one account.
+**Nothing reads the categories.** They are stored because the question that produced them is
+the rate-limited part, and re-deriving them later would cost one request per reminder. What
+they are for is a filter or a label in the interface, and neither exists.
 
-**Nothing recrawls.** When it does, it will be on a flag rather than on every write: a
-`needs_recrawl` set true when the account's `about` changes, when a reminder is added, removed
-or given a description, and when the rhythm changes — with a background loop checking it
-periodically and doing the work in one pass. The same argument the
-[backup pusher](deploy.md#backups) makes about its interval applies here and costs more:
-somebody writing down six things in a minute must be one crawl, not six, because each one is a
-request against a key with fifty a day in it.
+**A person is never told what their companion said.** The advice is invisible: it moves when
+things arrive and nothing shows why. That is defensible while it is only a weighting — btw
+deliberately shows no schedule — but a wrong answer is currently something somebody can feel
+and not see, and the only remedy is rewriting `about` and waiting.
 
-That flag belongs in `derived.db`, not beside the key. It is process state rather than
-something a person typed, and it passes the admission test in
-[entities.md](entities.md#the-split-is-about-backups-not-derivation) — a lost flag costs one
-unnecessary crawl, and its absence meaning "crawl" is the safe default for a `derived.db`
-thrown away along with the metadata it was tracking.
+**A failure is recorded and never surfaced.** `advice_state.error` holds the reason the last
+attempt did not work, and nothing renders it, so a key that stopped working looks like a
+feature that stopped helping.

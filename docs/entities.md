@@ -227,6 +227,55 @@ single strongest reason `main.db` is the file that gets backed up. Rotation is n
 cross a database. A row pointing at a deleted account is garbage to be collected, not an
 inconsistency to be repaired.
 
+### `advice`
+
+```
+reminder_id, exclusive, categories, slots, advised_at
+```
+
+What the [companion](companion.md) made of one reminder. Here rather than in `main.db` because
+every row is recomputable from what is there — the reminders, the account's `about`, its rhythm
+— and nobody typed a word of it. It is also the half that churns: `main.db` is written when a
+person types something, and advice is rewritten whenever anything moves.
+
+`slots` is JSON, `[{"day":0-6 from monday,"start":minutes,"end":minutes}]`, in **minutes since
+local midnight** — the same units and the same origin a rhythm's waking window uses, against
+the same IANA name. Nothing outside `internal/rhythm` converts; everything else compares
+integers. An `end` at or before its `start` runs past midnight into the next day, which is how
+somebody who goes to bed at four gets a window that means four hours.
+
+`categories` is JSON and **nothing reads it yet**. Kept because asking again is the expensive
+part — a free key allows fifty questions a day — so discarding half of an answer already paid
+for, to save a column, would be paid back one request per reminder.
+
+Replaced **wholesale** for the whole set each time, not row by row: a reminder the companion
+was asked about and said nothing for has to lose what it was told last time, and a loop of
+upserts leaves exactly that behind.
+
+No foreign key to `reminders`, because no constraint can cross a database. A row for a deleted
+reminder is garbage to collect, and is never consulted meanwhile — the weighting joins from the
+reminders it already has.
+
+### `advice_state`
+
+```
+principal_id, stale, advised_at, attempted_at, error
+```
+
+Whether a person's advice is worth what it says. A **flag rather than a timestamp comparison**:
+"has anything changed since we last asked" is a question about writes scattered across two
+databases — a reminder added, a note written, an `about` rewritten, a rhythm moved — and the
+cheapest true answer is for each of those writes to say so.
+
+**Absence means stale.** A `derived.db` thrown away takes the advice with it, so the state
+saying "already asked" must not be the thing that survives, and a fresh instance asking once
+for everybody is exactly right.
+
+A **failure leaves it stale** and records the reason. Clearing it would mean a key that stopped
+working quietly froze everybody's advice at whatever it last said; the loop's own interval is
+the only thing throttling the retry, which is what stops a broken key spending a day's quota in
+a minute.
+
 ### `sessions`
 
 ```

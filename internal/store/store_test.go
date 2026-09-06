@@ -748,3 +748,177 @@ func TestNoCompanionIsNotAnError(t *testing.T) {
 		t.Errorf("Companion() = %+v, want the zero value", got)
 	}
 }
+
+// The reason a slot is a window and not an hour: somebody who goes to bed at four wants
+// "22:00 to 02:00" to mean four hours, and the second two fall on the following day.
+func TestASlotThatRunsPastMidnightCoversBothDays(t *testing.T) {
+	// Saturday evening into Sunday morning.
+	night := Slot{Day: 5, Start: 22 * 60, End: 2 * 60}
+
+	for _, tc := range []struct {
+		name   string
+		day    int
+		minute int
+		want   bool
+	}{
+		{"saturday evening", 5, 23 * 60, true},
+		{"saturday at the start", 5, 22 * 60, true},
+		{"sunday small hours", 6, 60, true},
+		{"sunday at the end", 6, 2 * 60, false},
+		{"sunday morning", 6, 9 * 60, false},
+		{"saturday afternoon", 5, 15 * 60, false},
+		{"friday night", 4, 23 * 60, false},
+	} {
+		if got := night.Covers(tc.day, tc.minute); got != tc.want {
+			t.Errorf("Covers(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// Sunday is day 6, so its spill lands on Monday rather than on an eighth day.
+	sunday := Slot{Day: 6, Start: 23 * 60, End: 60}
+	if !sunday.Covers(0, 30) {
+		t.Error("a Sunday night slot does not reach into Monday")
+	}
+
+	// An ordinary window is half-open: the end belongs to whatever comes next.
+	day := Slot{Day: 2, Start: 9 * 60, End: 17 * 60}
+	if !day.Covers(2, 9*60) || day.Covers(2, 17*60) || day.Covers(3, 10*60) {
+		t.Error("an ordinary window is not half-open on the day it names")
+	}
+}
+
+// A derived.db thrown away takes the advice with it, so the state that says "already asked"
+// must not be the thing that survives.
+func TestAdviceWithNoStateAtAllIsStale(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+
+	stale, err := s.AdviceIsStale(context.Background(), p.ID)
+	if err != nil {
+		t.Fatalf("AdviceIsStale(): %v", err)
+	}
+	if !stale {
+		t.Error("an account nothing is recorded for was called fresh")
+	}
+}
+
+func TestAskingAgainIsWhatClearsTheFlagAndFailingIsNot(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+	now := s.Now()
+
+	if err := s.RecordAdvised(ctx, p.ID, now); err != nil {
+		t.Fatalf("RecordAdvised(): %v", err)
+	}
+	if stale, _ := s.AdviceIsStale(ctx, p.ID); stale {
+		t.Error("still stale after an answer arrived")
+	}
+
+	if err := s.MarkAdviceStale(ctx, p.ID); err != nil {
+		t.Fatalf("MarkAdviceStale(): %v", err)
+	}
+	if stale, _ := s.AdviceIsStale(ctx, p.ID); !stale {
+		t.Error("a change did not make the advice worth asking for again")
+	}
+
+	// A failure is not an answer. Clearing the flag here would mean a key that stopped working
+	// quietly froze everybody's advice at whatever it last said.
+	if err := s.RecordAdviceFailure(ctx, p.ID, now, "the key was rejected"); err != nil {
+		t.Fatalf("RecordAdviceFailure(): %v", err)
+	}
+	if stale, _ := s.AdviceIsStale(ctx, p.ID); !stale {
+		t.Error("a failed attempt was treated as an answer")
+	}
+}
+
+// The answer is about the set. A reminder the companion was asked about and said nothing for
+// has to lose whatever it was told last time, or a stale opinion outlives the question.
+func TestAskingAgainReplacesTheWholeAnswerAndNotJustTheRowsMentioned(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	one, err := s.CreateReminder(ctx, p.ID, "water the plants")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	two, err := s.CreateReminder(ctx, p.ID, "call the dentist")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	ids := []string{one.ID, two.ID}
+
+	first := map[string]Advice{
+		one.ID: {Slots: []Slot{{Day: 0, Start: 540, End: 600}}},
+		two.ID: {Exclusive: true, Slots: []Slot{{Day: 1, Start: 540, End: 600}}},
+	}
+	if err := s.SetAdvice(ctx, ids, first); err != nil {
+		t.Fatalf("SetAdvice(): %v", err)
+	}
+
+	// The second round says nothing about `two`.
+	if err := s.SetAdvice(ctx, ids, map[string]Advice{
+		one.ID: {Slots: []Slot{{Day: 3, Start: 1200, End: 1320}}},
+	}); err != nil {
+		t.Fatalf("SetAdvice(): %v", err)
+	}
+
+	got, err := s.adviceFor(ctx, ids)
+	if err != nil {
+		t.Fatalf("adviceFor(): %v", err)
+	}
+	if _, ok := got[two.ID]; ok {
+		t.Error("advice survived a round that did not mention its reminder")
+	}
+	if len(got[one.ID].Slots) != 1 || got[one.ID].Slots[0].Day != 3 {
+		t.Errorf("slots = %+v, want the second round's answer", got[one.ID].Slots)
+	}
+}
+
+// Candidates reach the weighting carrying whatever was said about them, across two databases
+// that no single statement may span.
+func TestACandidateCarriesItsAdvice(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	advised, err := s.CreateReminder(ctx, p.ID, "watch something")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	silent, err := s.CreateReminder(ctx, p.ID, "nothing has been said about this")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	if err := s.SetAdvice(ctx, []string{advised.ID}, map[string]Advice{
+		advised.ID: {
+			Exclusive:  true,
+			Categories: []string{"entertainment"},
+			Slots:      []Slot{{Day: 6, Start: 22 * 60, End: 2 * 60}},
+		},
+	}); err != nil {
+		t.Fatalf("SetAdvice(): %v", err)
+	}
+
+	got, err := s.Candidates(ctx, p.ID, s.Now(), IgnoreFloor)
+	if err != nil {
+		t.Fatalf("Candidates(): %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Candidates() = %d, want 2", len(got))
+	}
+	for _, c := range got {
+		switch c.ID {
+		case advised.ID:
+			if !c.Advised || !c.Exclusive || len(c.Slots) != 1 {
+				t.Errorf("advised candidate = %+v, want it to carry what was said", c)
+			}
+		case silent.ID:
+			if c.Advised || len(c.Slots) != 0 {
+				t.Errorf("unadvised candidate = %+v, want nothing attached", c)
+			}
+		}
+	}
+}

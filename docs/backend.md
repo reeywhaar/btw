@@ -17,6 +17,7 @@ internal/
   pick/              what the nudge carries — pure
   webpush/           VAPID, RFC 8291 encryption, one POST
   openrouter/        one question, put to the model an account has a key for
+  advise/            asks the companion about somebody's reminders — the impure half
   nudge/             the scheduler: the impure half
   backup/            snapshots the databases and posts them to a backup agent
   api/               HTTP handlers, middleware, SPA serving
@@ -146,6 +147,20 @@ store touches the network.
 Its tests hold a real conversation with a server started on a loopback port, for the reason
 `internal/mail`'s do. A mocked `http.Client` would assert that `net/http` was called; what is
 worth asserting is that a fault arriving inside a `200` is still a failure.
+
+## `internal/advise`
+
+Asks each person's companion what it makes of their reminders, and records the answer for the
+weighting to read. See [companion.md](companion.md).
+
+The impure half of the companion, as `internal/nudge` is the impure half of the scheduling. Its
+own loop rather than a second job on the scheduler's tick: the two run on different clocks for
+different reasons — one is a person's rhythm, the other is a quota — and a slow answer from a
+model must never delay a nudge.
+
+The prompt is a **template constant**, not string-building. It is the product here, so it reads
+as what the model reads and a change to it is a diff somebody can judge without running
+anything.
 
 ## `internal/nudge`
 

@@ -8,6 +8,20 @@ import (
 	"btw/internal/store"
 )
 
+// adviceStale tells the companion loop that something changed under it.
+//
+// Best effort and never fatal, exactly like the scheduled nudge a rhythm change drops: failing
+// to mark means advice stays a little out of date, and that is not a reason to refuse
+// somebody's edit. It is called from every write that could change what the companion would
+// say — a reminder written, described, ended, revived or deleted, an `about` rewritten, a
+// rhythm moved — and never from one that could not, which is why nudging a reminder does not
+// appear in that list.
+func (s *Server) adviceStale(r *http.Request, principalID string) {
+	if err := s.store.MarkAdviceStale(r.Context(), principalID); err != nil {
+		s.log.Error("could not mark advice stale", "principal", principalID, "err", err)
+	}
+}
+
 // companionJSON is the companion as it goes out, which is everything except the key.
 //
 // A stored key is never sent back, for the reason docs/mail.md gives about the relay's
@@ -65,6 +79,8 @@ func (s *Server) putCompanion(w http.ResponseWriter, r *http.Request) {
 	// The model and never the key, and no part of about either: what somebody wrote about
 	// their own life is not a thing to leave in a log an operator reads.
 	s.log.Info("companion configured", "model", set.Model, "by", p.Username)
+	// The `about` may have been rewritten, which changes every answer about this person.
+	s.adviceStale(r, p.ID)
 	s.getCompanion(w, r)
 }
 
@@ -75,6 +91,11 @@ func (s *Server) deleteCompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("companion forgotten", "by", p.Username)
+	// Marked stale rather than cleared. The advice already given stays and keeps working —
+	// it was true when it was written — and if a key is added again there is nothing to
+	// rebuild. Nothing asks on behalf of an account with no companion, so the flag simply
+	// waits.
+	s.adviceStale(r, p.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

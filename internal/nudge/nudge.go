@@ -176,11 +176,19 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 		return NothingToSend, 0, err
 	}
 
+	// Read before the choice as well as after it: the companion's slots are in this person's
+	// local week, and turning an instant into that is the one thing only a rhythm can do.
+	rh, err := s.store.Rhythm(ctx, principalID)
+	if err != nil {
+		return NothingToSend, 0, err
+	}
+	day, minute := rhythm.Local(rh, now)
+
 	// The id is minted before the choice because it seeds it, and because it has to travel
 	// inside the payload — the notification's buttons post back to it.
 	nudgeID := store.NewNudgeID()
 
-	chosen, ok := pick.Pick(candidates, now, last, nudgeID)
+	chosen, ok := pick.Pick(candidates, now, pick.Moment{Day: day, Minute: minute}, last, nudgeID)
 	if !ok {
 		// Nothing eligible sends nothing at all. Reaching for the next-least-ineligible
 		// reminder, or repeating this morning's, is how a notification channel gets turned
@@ -198,10 +206,6 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 	}
 
 	// The worker cannot read a rhythm, so whether this one is silent rides with it.
-	rh, err := s.store.Rhythm(ctx, principalID)
-	if err != nil {
-		return NothingToSend, 0, err
-	}
 	payload, err := json.Marshal(map[string]any{
 		"nudge_id": nudgeID,
 		"text":     chosen.Text,

@@ -136,7 +136,7 @@ coming back is the product working, one that goes quiet is the product broken.
 ### Weighted
 
 ```
-weight = priority × min(4, (now − last_nudged_at) / min_interval)
+weight = priority × min(4, (now − last_nudged_at) / min_interval) × advice
 ```
 
 The multiplier is what makes this not a loop, and it needs no separate rule to stop one. The
@@ -163,6 +163,41 @@ week.
 
 Priority is a probability, not an order. One at 90 arrives more often than one at 10 and never
 silences it, which a sort would fail to give.
+
+#### The companion's advice is the last term, and only a multiplier
+
+`advice` is **exactly 1** unless a [companion](companion.md) has been asked about this
+reminder. That is what makes the whole feature optional at the level of one reminder rather
+than one account: something written a minute ago, before the next round of questions, weighs
+precisely what it would have weighed before any of this existed.
+
+When there is advice, it is one of three numbers, decided by whether *now* falls inside one of
+the windows the companion named — in the person's own local week, converted once in
+`internal/rhythm` and compared as integers everywhere after.
+
+| | multiplier |
+| --- | --- |
+| inside one of its windows | **3.0** |
+| outside them | **0.6** |
+| outside them, and it wants full attention | **0.25** |
+
+In its hours a reminder is five times as likely as one outside them, twelve times if that one
+is exclusive. The damping is gentle on purpose: the companion is guessing from a paragraph
+somebody wrote about themselves, and a wrong guess should cost a nudge its place in the queue
+rather than its place in the product. It is harsher for something exclusive because the costs
+are not symmetric — a show suggested at a bad moment is ignored, and ignoring is free, while an
+hour of concentration suggested at a bad moment is the notification people turn off.
+
+**Never zero.** The companion moves a reminder around somebody's week; it does not get to
+remove one. Silencing is a person's decision with exactly one expression — priority zero — and
+a model that could reach the same outcome by finding no good hours would be a second, invisible
+way for something to stop arriving. A reminder the companion can place nowhere still surfaces,
+because staleness keeps climbing underneath and runs to four.
+
+The advice applies to a **never-nudged** reminder too, rather than being skipped along with the
+staleness arithmetic. It is tempting to let something just written down arrive at once, but the
+first arrival is the one most worth placing well, and maximal staleness already puts it far
+enough ahead that the multiplier decides which hour rather than whether.
 
 ### Nothing eligible sends nothing at all
 
