@@ -95,7 +95,7 @@ cryptography.
 | header | value | why |
 | --- | --- | --- |
 | `TTL` | `3600` | The one easiest to set to a day out of habit. A phone that has been off for two hours should not receive "btw, ring the dentist" at midnight; that nudge belonged to an afternoon that has passed. An hour, and then the push service drops it on our behalf |
-| `Topic` | `btw` | A push service collapses undelivered messages sharing a topic, so a phone coming back from a flat battery gets the most recent nudge, once, rather than three at the door. At most 32 URL-safe characters |
+| `Topic` | `btw` / `btw-alert` | A push service collapses undelivered messages sharing a topic, so a phone coming back from a flat battery gets the most recent nudge, once, rather than three at the door. At most 32 URL-safe characters. The value comes from the channel — see below |
 | `Urgency` | `normal` | — |
 
 ## What a refusal means
@@ -186,6 +186,45 @@ on their own — after a permission is re-granted, after site data is cleared, a
 `pushsubscriptionchange`. Registering upserts on the endpoint, so a rotated subscription
 arrived as a *new row beside the old one*, both stayed live at the push service, and one
 press of "send one now" sent two pushes. One browser, two notifications.
+
+## Two channels
+
+A nudge carries a reminder. An **alert** carries something about btw itself — today, only that
+a [companion](companion.md) has stopped working.
+
+They are separate at **both** hops, and either one alone would lose a message.
+
+| | nudges | alerts |
+| --- | --- | --- |
+| `Topic` | `btw` | `btw-alert` |
+| `TTL` | 3600 | 86400 |
+| notification tag | `btw` | `btw-alert` |
+| title | `btw` | its own sentence |
+| actions | Done, Drop | none |
+
+**The topic**, because a push service discards an undelivered message when a later one shares
+it. An alert sent under the nudges' topic replaces a nudge already waiting for a phone that has
+been off, so a person sent both receives one — and which one is not up to us.
+
+**The tag**, because the worker closes every notification carrying the tag before showing
+another. That is the iOS workaround described above, and it cuts both ways: a shared tag means
+an alert erases an unread nudge and the next nudge erases the alert.
+
+They are one type in Go, `webpush.Channel`, rather than two constants. The topic and the TTL
+are one decision — a stream whose messages are worth keeping for a day must not collapse
+against a stream whose messages expire in an hour — and holding them apart is how the two end
+up disagreeing.
+
+A day rather than an hour for an alert, because what it reports does not expire the way a nudge
+does: a key that stopped working yesterday has still stopped working.
+
+**No icon.** `showNotification` accepts one, and iOS ignores it and uses the app icon
+regardless. An icon would distinguish the two on some phones and not others, which is worse
+than not distinguishing them. The title does the work everywhere.
+
+**No Done or Drop.** Those answer a reminder and there is none here; buttons posting to a nudge
+id that does not exist would be two ways to do nothing. A tap opens `/settings` instead, which
+is where the thing it is about can be fixed.
 
 Neither the `Topic` header nor the notification tag can help with that. Both collapse
 messages within one subscription, and this is two.

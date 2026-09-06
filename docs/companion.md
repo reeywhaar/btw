@@ -177,6 +177,30 @@ A quota reads differently from a mistake. `limited` says the key is out of reque
 try again on its own; nothing needs doing, and saying so is the difference between waiting and
 going to look for a broken key that is fine.
 
+### A key that stops working says so
+
+Settings is where somebody looks once they already suspect. The case this feature actually
+fails on is the other one: a key revoked in March and noticed in June, with three months of
+nudges that were never weighted and nothing anywhere saying why.
+
+So a failure is pushed, on its own channel — see [push.md](push.md#two-channels) for why a
+notification about btw cannot share a topic or a tag with one carrying a reminder.
+
+Two rules keep it from becoming the thing people turn notifications off over.
+
+**Once per episode.** The loop runs every half hour and a broken key fails every pass, so
+without a flag this would be a notification twice an hour for as long as it stayed broken. The
+flag is lowered by a round that succeeds, so a key fixed and later broken again is worth a
+second message. An undelivered message is not counted as told.
+
+**Never while they are asleep.** btw refuses to nudge outside somebody's waking hours, and a
+message about an API key has less claim on four in the morning than a reminder does. Asleep
+means it is held rather than dropped: it goes out on the first pass after they wake.
+
+**A quota is not pushed at all.** It resolves itself, nothing somebody could do would help, and
+a notification saying so is one that trains them to ignore the next one. `limited` stays in
+settings, where it costs nobody anything.
+
 ## When it is asked
 
 Every write that could change an answer sets a flag, and a loop decides when to act.
@@ -226,8 +250,5 @@ chose. That is defensible while it is only a weighting — btw deliberately show
 but a wrong answer is still something somebody can feel more easily than see, and the remedy is
 rewriting `about` and waiting.
 
-**Nothing tells anybody a key has stopped working unless they open settings.** The state is
-recorded and shown there, which is where somebody looks once they already suspect. A push would
-reach them without their suspecting — but a nudge carries a reminder, and a notification that
-carries a status message instead is a different kind of thing arriving down the same channel.
-That is a product decision, not a plumbing one.
+**Nothing verifies the advice was any good.** A model that places everything at three in the
+morning and a model that understands somebody's week produce the same log line.

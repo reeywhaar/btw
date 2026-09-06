@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,7 +120,7 @@ func TestAPayloadTooLargeNeverLeavesTheProcess(t *testing.T) {
 	// service is not asked a question whose answer is already known.
 	err := testSender(t).Send(t.Context(), Subscription{
 		Endpoint: srv.URL, P256dh: vectorUAPublic, Auth: vectorAuth,
-	}, bytes.Repeat([]byte("x"), MaxBody+1))
+	}, bytes.Repeat([]byte("x"), MaxBody+1), Nudges)
 
 	var f *Failure
 	if !errors.As(err, &f) || f.Reason != ReasonTooLarge {
@@ -179,7 +180,7 @@ func TestAGoneSubscriptionIsDeletedRatherThanRetried(t *testing.T) {
 		}))
 		err := testSender(t).Send(t.Context(), Subscription{
 			Endpoint: srv.URL, P256dh: vectorUAPublic, Auth: vectorAuth,
-		}, []byte("btw"))
+		}, []byte("btw"), Nudges)
 		srv.Close()
 
 		if !Gone(err) {
@@ -196,7 +197,7 @@ func TestABusyPushServiceIsNotGone(t *testing.T) {
 
 	err := testSender(t).Send(t.Context(), Subscription{
 		Endpoint: srv.URL, P256dh: vectorUAPublic, Auth: vectorAuth,
-	}, []byte("btw"))
+	}, []byte("btw"), Nudges)
 
 	var f *Failure
 	if !errors.As(err, &f) || f.Reason != ReasonBusy {
@@ -217,17 +218,17 @@ func TestSendCarriesTheHeadersThatMakeANudgeTimely(t *testing.T) {
 
 	if err := testSender(t).Send(t.Context(), Subscription{
 		Endpoint: srv.URL, P256dh: vectorUAPublic, Auth: vectorAuth,
-	}, []byte("go to the circus")); err != nil {
+	}, []byte("go to the circus"), Nudges); err != nil {
 		t.Fatalf("Send(): %v", err)
 	}
 
 	// TTL is what stops a nudge arriving at midnight about an afternoon that has passed,
 	// and Topic is what stops three arriving together when a flat battery comes back.
-	if got.Get("TTL") != "3600" {
-		t.Errorf("TTL = %q, want 3600", got.Get("TTL"))
+	if got.Get("TTL") != strconv.Itoa(Nudges.TTL) {
+		t.Errorf("TTL = %q, want %d", got.Get("TTL"), Nudges.TTL)
 	}
-	if got.Get("Topic") != Topic {
-		t.Errorf("Topic = %q, want %q", got.Get("Topic"), Topic)
+	if got.Get("Topic") != Nudges.Topic {
+		t.Errorf("Topic = %q, want %q", got.Get("Topic"), Nudges.Topic)
 	}
 	if got.Get("Content-Encoding") != "aes128gcm" {
 		t.Errorf("Content-Encoding = %q, want aes128gcm", got.Get("Content-Encoding"))
@@ -296,4 +297,46 @@ func open(t *testing.T, body, uaPrivateRaw, uaPublicRaw, authSecret []byte) ([]b
 		return nil, err
 	}
 	return bytes.TrimRight(record, "\x02"), nil
+}
+
+// Two streams, and the topic is what keeps them apart at the push service. A push service
+// discards an undelivered message when a later one shares its topic, so an alert sent under
+// the nudges' topic would replace a nudge waiting for a phone that has been off — and the
+// person, sent both, would receive one.
+func TestAlertsTravelOnTheirOwnTopic(t *testing.T) {
+	if Alerts.Topic == Nudges.Topic {
+		t.Fatal("alerts share the nudges' topic, so a push service will collapse the two")
+	}
+	// What an alert reports does not expire the way a nudge does: a key that stopped working
+	// yesterday has still stopped working.
+	if Alerts.TTL <= Nudges.TTL {
+		t.Errorf("alert TTL = %d, nudge TTL = %d, want an alert held longer", Alerts.TTL, Nudges.TTL)
+	}
+	for _, ch := range []Channel{Nudges, Alerts} {
+		// RFC 8030 caps a topic at 32 characters from the URL-safe alphabet.
+		if len(ch.Topic) == 0 || len(ch.Topic) > 32 {
+			t.Errorf("topic %q is %d characters, want 1 to 32", ch.Topic, len(ch.Topic))
+		}
+	}
+}
+
+func TestTheChannelDecidesTheHeaders(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	if err := testSender(t).Send(t.Context(), Subscription{
+		Endpoint: srv.URL, P256dh: vectorUAPublic, Auth: vectorAuth,
+	}, []byte("your key stopped working"), Alerts); err != nil {
+		t.Fatalf("Send(): %v", err)
+	}
+	if got.Get("Topic") != Alerts.Topic {
+		t.Errorf("Topic = %q, want %q", got.Get("Topic"), Alerts.Topic)
+	}
+	if got.Get("TTL") != strconv.Itoa(Alerts.TTL) {
+		t.Errorf("TTL = %q, want %d", got.Get("TTL"), Alerts.TTL)
+	}
 }

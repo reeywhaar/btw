@@ -128,6 +128,10 @@ type AdviceState struct {
 	// Limited is whether that failure was a quota rather than a mistake. Nothing needs doing
 	// about one: the next pass is the wait.
 	Limited bool
+
+	// Alerted is whether the person has already been told about this failure. Once per
+	// episode, not once per pass — see the migration that added it.
+	Alerted bool
 }
 
 // Advice reads how the last round went. A missing row is the zero value, which is stale.
@@ -137,8 +141,9 @@ func (s *Store) Advice(ctx context.Context, principalID string) (AdviceState, er
 		advised, attempted sql.NullInt64
 	)
 	err := s.derived.QueryRowContext(ctx,
-		`SELECT stale, advised_at, attempted_at, error, limited FROM advice_state WHERE principal_id = ?`,
-		principalID).Scan(&st.Stale, &advised, &attempted, &st.Error, &st.Limited)
+		`SELECT stale, advised_at, attempted_at, error, limited, alerted
+		   FROM advice_state WHERE principal_id = ?`,
+		principalID).Scan(&st.Stale, &advised, &attempted, &st.Error, &st.Limited, &st.Alerted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AdviceState{Stale: true}, nil
 	}
@@ -183,6 +188,15 @@ func (s *Store) AdviceCoverage(ctx context.Context, principalID string) (open, a
 	return len(ids), len(advice), nil
 }
 
+// MarkAdviceAlerted records that the person has been told their companion stopped working.
+func (s *Store) MarkAdviceAlerted(ctx context.Context, principalID string) error {
+	if _, err := s.derived.ExecContext(ctx,
+		`UPDATE advice_state SET alerted = 1 WHERE principal_id = ?`, principalID); err != nil {
+		return fmt.Errorf("mark advice alerted: %w", err)
+	}
+	return nil
+}
+
 // ForgetAdvice drops what was said about one reminder.
 //
 // Called when a reminder is deleted outright, and never when one is merely finished with:
@@ -200,11 +214,14 @@ func (s *Store) ForgetAdvice(ctx context.Context, reminderID string) error {
 // RecordAdvised marks one person's advice fresh.
 func (s *Store) RecordAdvised(ctx context.Context, principalID string, at time.Time) error {
 	_, err := s.derived.ExecContext(ctx,
-		`INSERT INTO advice_state (principal_id, stale, advised_at, attempted_at, error, limited)
-		 VALUES (?, 0, ?, ?, '', 0)
+		`INSERT INTO advice_state (principal_id, stale, advised_at, attempted_at, error, limited, alerted)
+		 VALUES (?, 0, ?, ?, '', 0, 0)
 		 ON CONFLICT (principal_id) DO UPDATE SET
 		   stale = 0, advised_at = excluded.advised_at,
-		   attempted_at = excluded.attempted_at, error = '', limited = 0`,
+		   attempted_at = excluded.attempted_at, error = '', limited = 0,
+		   -- Lowered by a round that worked, so a key that breaks again months later is
+		   -- worth another message.
+		   alerted = 0`,
 		principalID, unix(at), unix(at))
 	if err != nil {
 		return fmt.Errorf("record advised: %w", err)

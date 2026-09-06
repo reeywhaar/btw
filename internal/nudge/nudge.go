@@ -215,7 +215,7 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 		return NothingToSend, 0, err
 	}
 
-	delivered := s.fanOut(ctx, devices, payload)
+	delivered := s.fanOut(ctx, devices, payload, webpush.Nudges)
 	if delivered == 0 {
 		// Nothing reached a push service, so nothing is recorded: the reminder keeps its
 		// place in the pool rather than spending its floor on a notification nobody got.
@@ -231,12 +231,63 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 	return Sent, delivered, nil
 }
 
+// Alert says something about btw itself rather than about a reminder, and reports how many
+// devices took it.
+//
+// **Its own channel, not a differently-worded nudge.** Two things would otherwise collapse it
+// into one: the push service, which discards undelivered messages sharing a topic, and the
+// service worker, which closes every notification carrying the tag before showing another. A
+// person owed a nudge and an alert would receive one of them, and which one is not up to us.
+//
+// It carries no Done and no Drop. Those answer a reminder, and there is no reminder here —
+// buttons that posted to a nudge id which does not exist would be two ways to do nothing.
+//
+// On the Scheduler rather than in internal/advise because everything below the payload is the
+// same work: the same fan-out across a person's devices, the same handling of a browser that
+// has been reinstalled. A second copy of that is a second place for a dead device to
+// accumulate.
+func (s *Scheduler) Alert(ctx context.Context, principalID, title, text string) (int, error) {
+	devices, err := s.store.Devices(ctx, principalID)
+	if err != nil {
+		return 0, err
+	}
+	if len(devices) == 0 {
+		return 0, nil
+	}
+
+	rh, err := s.store.Rhythm(ctx, principalID)
+	if err != nil {
+		return 0, err
+	}
+	payload, err := json.Marshal(map[string]any{
+		// The worker branches on this, and its absence is a nudge — so a payload written by a
+		// version that did not know about alerts still reads correctly.
+		"kind":  "alert",
+		"title": title,
+		"text":  text,
+		// Where a tap should land, since there is nothing to answer here and opening the app
+		// at its front door would leave somebody to find the setting themselves.
+		"url": "/settings",
+		// Somebody who has asked for quiet has asked for quiet about this too.
+		"silent": rh.Silent,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	delivered := s.fanOut(ctx, devices, payload, webpush.Alerts)
+	if delivered > 0 {
+		s.log.Info("alert sent", "principal", principalID, "devices", len(devices), "delivered", delivered)
+	}
+	return delivered, nil
+}
+
 // fanOut sends to every one of a person's devices at once and reports whether any of them
 // took it.
 //
 // Concurrently because a phone whose push service is slow must not delay the laptop's, and
 // because this runs inside a pass that everybody else's turn is waiting behind.
-func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload []byte) int {
+func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload []byte, ch webpush.Channel) int {
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
@@ -250,7 +301,7 @@ func (s *Scheduler) fanOut(ctx context.Context, devices []store.Device, payload 
 				Endpoint: d.Endpoint,
 				P256dh:   d.P256dh,
 				Auth:     d.Auth,
-			}, payload)
+			}, payload, ch)
 
 			switch {
 			case err == nil:

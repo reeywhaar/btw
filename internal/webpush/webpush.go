@@ -40,23 +40,47 @@ import (
 	"time"
 )
 
-// Message headers that are the same on every send.
-const (
-	// TTL is the header that matters most here, and the one easiest to set to a day out of
-	// habit. A phone that has been off for two hours should not receive "btw, ring the
-	// dentist" at midnight; that nudge belonged to an afternoon that has passed. An hour,
-	// and then the push service drops it on our behalf.
-	TTL = 3600
+// MaxBody is the ceiling a push service is required to accept: 4096 bytes of encrypted
+// payload. The 86-byte header and the 17 bytes of padding delimiter and GCM tag come out of
+// it, which still leaves far more than a reminder should be.
+const MaxBody = 4096
 
-	// Topic makes a push service collapse undelivered messages that share it, so a phone
-	// coming back from a flat battery gets the most recent nudge, once, rather than three
-	// at the door. At most 32 characters from the URL-safe alphabet, per RFC 8030.
-	Topic = "btw"
+// Channel is one stream of notifications, as a push service sees it.
+//
+// The topic is what makes two streams independent, and it is not an optimisation: a push
+// service **collapses undelivered messages that share one**. A message sent under the nudges'
+// topic replaces a nudge already waiting for a phone that has been off — so a person sent both
+// receives one, and which one is not up to us.
+//
+// A type rather than two constants because the topic and the TTL are one decision. A stream
+// whose messages are worth keeping for a day is a stream whose messages must not collapse
+// against a stream whose messages expire in an hour, and holding them apart in separate
+// constants is how the two end up disagreeing.
+type Channel struct {
+	// Topic is at most 32 characters from the URL-safe alphabet, per RFC 8030.
+	Topic string
 
-	// MaxBody is the ceiling a push service is required to accept: 4096 bytes of encrypted
-	// payload. The 86-byte header and the 17 bytes of padding delimiter and GCM tag come
-	// out of it, which still leaves far more than a reminder should be.
-	MaxBody = 4096
+	// TTL is how long a push service should hold an undelivered message, in seconds.
+	TTL int
+}
+
+var (
+	// Nudges is the stream a reminder arrives on.
+	//
+	// An hour, and the one header easiest to set to a day out of habit. A phone that has been
+	// off for two hours should not receive "btw, ring the dentist" at midnight; that nudge
+	// belonged to an afternoon that has passed. Collapsing is wanted here — a phone back from
+	// a flat battery gets the most recent nudge, once, rather than three at the door.
+	Nudges = Channel{Topic: "btw", TTL: 3600}
+
+	// Alerts is the stream btw uses to say something about itself rather than about a
+	// reminder.
+	//
+	// A day, because what it reports does not expire the way a nudge does: a companion whose
+	// key stopped working yesterday has still stopped working. Its own topic so it neither
+	// replaces a waiting nudge nor is replaced by one — the whole reason it is a second
+	// channel and not a differently-worded first one.
+	Alerts = Channel{Topic: "btw-alert", TTL: 86400}
 )
 
 // recordSize is what the header advertises. One record, so it only has to be large enough
@@ -105,7 +129,7 @@ func (s *Sender) PublicKey() string { return b64.EncodeToString(s.pub) }
 //
 // The returned error is a *Failure when the push service answered, so a caller can tell a
 // subscription that is gone from one that is merely busy.
-func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte) error {
+func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte, ch Channel) error {
 	body, err := s.seal(sub, payload)
 	if err != nil {
 		return err
@@ -129,8 +153,8 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte) err
 	req.Header.Set("Content-Encoding", "aes128gcm")
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
-	req.Header.Set("TTL", strconv.Itoa(TTL))
-	req.Header.Set("Topic", Topic)
+	req.Header.Set("TTL", strconv.Itoa(ch.TTL))
+	req.Header.Set("Topic", ch.Topic)
 	req.Header.Set("Urgency", "normal")
 
 	resp, err := s.client.Do(req)

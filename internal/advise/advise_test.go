@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"btw/internal/openrouter"
 	"btw/internal/store"
@@ -390,5 +391,136 @@ func TestAdviceOutlivesADoneReminderAndNotADeletedOne(t *testing.T) {
 	}
 	if len(got) != 1 || !got[0].Advised {
 		t.Errorf("candidates = %+v, want the revived reminder still carrying its advice", got)
+	}
+}
+
+// alerts records what would have gone to somebody's devices.
+type alerts struct {
+	sent []string
+	// nobodyTakes makes every send land nowhere. A bool rather than a count, because a count
+	// wants a zero value meaning "one device took it" and that is exactly the reading that
+	// hid the bug this tests for.
+	nobodyTakes bool
+}
+
+func (a *alerts) Alert(_ context.Context, principalID, title, text string) (int, error) {
+	a.sent = append(a.sent, principalID+": "+title+" — "+text)
+	if a.nobodyTakes {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func broken(t *testing.T, status int) (*store.Store, store.Principal, *alerts) {
+	t.Helper()
+	g := &gateway{status: status}
+	g.start(t)
+
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.CreateReminder(ctx, p.ID, "water the plants")
+	// Midday, inside the default waking window. Pinned rather than left to the wall clock:
+	// alerting is refused outside somebody's waking hours, so an unpinned clock makes every
+	// test here pass or fail depending on the hour it is run at.
+	st.SetClock(func() time.Time { return time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC) })
+	return st, p, &alerts{}
+}
+
+// The case the whole feature exists for: a key revoked in March and noticed in June, with
+// three months of nudges that were never weighted and no sign anything was wrong.
+func TestABrokenKeyIsPushedOnceAndNotEveryPass(t *testing.T) {
+	st, p, sent := broken(t, http.StatusUnauthorized)
+	ctx := context.Background()
+	a := adviser(st)
+	a.Alerts = sent
+
+	a.Once(ctx)
+	if len(sent.sent) != 1 {
+		t.Fatalf("sent %v, want one message", sent.sent)
+	}
+	if !strings.Contains(sent.sent[0], "Unauthorized") {
+		t.Errorf("message = %q, want the gateway's own words", sent.sent[0])
+	}
+
+	// The loop runs every half hour and a broken key fails every pass. Without the flag this
+	// is a notification twice an hour until somebody turns notifications off for good.
+	a.Once(ctx)
+	a.Once(ctx)
+	if len(sent.sent) != 1 {
+		t.Errorf("sent %d messages, want the person told once per episode", len(sent.sent))
+	}
+
+	// A round that works lowers the flag, so a key fixed and broken again months later is
+	// worth telling somebody about a second time.
+	if err := st.RecordAdvised(ctx, p.ID, st.Now()); err != nil {
+		t.Fatalf("RecordAdvised(): %v", err)
+	}
+	if err := st.MarkAdviceStale(ctx, p.ID); err != nil {
+		t.Fatalf("MarkAdviceStale(): %v", err)
+	}
+	a.Once(ctx)
+	if len(sent.sent) != 2 {
+		t.Errorf("sent %d messages, want a second episode to be worth one", len(sent.sent))
+	}
+}
+
+// A quota resolves itself and nothing somebody could do would help. A notification saying so
+// is a notification that trains them to ignore the next one.
+func TestAQuotaIsNotWorthANotification(t *testing.T) {
+	st, _, sent := broken(t, http.StatusTooManyRequests)
+	a := adviser(st)
+	a.Alerts = sent
+
+	a.Once(context.Background())
+	if len(sent.sent) != 0 {
+		t.Errorf("sent %v, want a quota to stay in settings", sent.sent)
+	}
+}
+
+// btw refuses to nudge outside somebody's waking hours, and a message about an API key has
+// less claim on four in the morning than a reminder does.
+func TestNobodyIsWokenToBeToldAboutAKey(t *testing.T) {
+	st, p, sent := broken(t, http.StatusUnauthorized)
+	ctx := context.Background()
+
+	// Awake from 09:00 to 22:00, and it is the small hours.
+	if err := st.SetRhythm(ctx, store.Rhythm{
+		PrincipalID: p.ID, Timezone: "UTC", WindowEnabled: true,
+		WakeMinute: 9 * 60, SleepMinute: 22 * 60, Budget: 3,
+	}); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+	night := time.Date(2026, 9, 6, 4, 0, 0, 0, time.UTC)
+	st.SetClock(func() time.Time { return night })
+
+	a := adviser(st)
+	a.Alerts = sent
+	a.Once(ctx)
+	if len(sent.sent) != 0 {
+		t.Fatalf("sent %v at four in the morning", sent.sent)
+	}
+
+	// And it is not recorded as told, so it goes out on the first pass after they wake.
+	st.SetClock(func() time.Time { return night.Add(8 * time.Hour) })
+	a.Once(ctx)
+	if len(sent.sent) != 1 {
+		t.Errorf("sent %v, want it held until waking hours rather than dropped", sent.sent)
+	}
+}
+
+// Marking somebody told about a message no device took would be the one way to lose the
+// notification entirely.
+func TestAnUndeliveredAlertIsSentAgain(t *testing.T) {
+	st, _, sent := broken(t, http.StatusUnauthorized)
+	sent.nobodyTakes = true
+
+	a := adviser(st)
+	a.Alerts = sent
+	a.Once(context.Background())
+	a.Once(context.Background())
+	if len(sent.sent) != 2 {
+		t.Errorf("tried %d times, want an undelivered message tried again", len(sent.sent))
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"btw/internal/openrouter"
+	"btw/internal/rhythm"
 	"btw/internal/store"
 )
 
@@ -44,10 +45,23 @@ const Every = 30 * time.Minute
 // queues, and an answer that arrives late is still worth having when nothing is waiting on it.
 const askTimeout = 3 * time.Minute
 
+// Alerter says something to a person's devices about btw itself.
+//
+// An interface of one method, satisfied by *nudge.Scheduler, so this package does not import
+// the scheduler and the dependency keeps running one way. It is also what lets a test watch
+// what would have been sent without a push service on the other end.
+type Alerter interface {
+	Alert(ctx context.Context, principalID, title, text string) (int, error)
+}
+
 // Adviser keeps everybody's advice roughly up to date.
 type Adviser struct {
 	Store *store.Store
 	Log   *slog.Logger
+
+	// Alerts is how somebody finds out their key stopped working without opening settings.
+	// Optional: nil sends nothing, which is what a test wants unless it is testing this.
+	Alerts Alerter
 
 	// Every defaults to the constant above. A field only so a test can drive the loop without
 	// waiting half an hour for it.
@@ -116,6 +130,12 @@ func (a *Adviser) Once(ctx context.Context) {
 		a.Log.Warn("could not advise", "principal", id, "limited", limited, "err", err)
 		if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error(), limited); err != nil {
 			a.Log.Error("could not record an advice failure", "principal", id, "err", err)
+		}
+		if !limited {
+			// A quota is not worth waking somebody for. It resolves itself, nothing they could
+			// do would help, and a notification saying so is one that trains them to ignore
+			// the next one.
+			a.tell(ctx, id, state, err)
 		}
 
 		// Nothing is throttled and the pass is not abandoned, because **a quota is per key and
@@ -189,6 +209,65 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 		"reminders", len(reminders), "answered", len(advice), "dropped", dropped,
 		"tokens", res.Tokens)
 	return nil
+}
+
+// tell lets somebody know their companion has stopped working, at most once per episode.
+//
+// Settings already says so, which is where somebody looks once they already suspect. This is
+// for the case that makes the whole feature fail quietly: a key revoked in March, noticed in
+// June, with three months of nudges that were never weighted and no sign anything was wrong.
+//
+// Two rules keep it from becoming the thing people turn notifications off over.
+//
+// **Once per episode.** The loop runs every half hour and a broken key fails every pass, so
+// without the flag this would be a notification twice an hour for as long as it stayed broken.
+// The flag is lowered by a round that succeeds, so a key fixed and later broken again is worth
+// a second message.
+//
+// **Not while they are asleep.** btw refuses to nudge outside somebody's waking hours, and a
+// message about an API key has less claim on four in the morning than a reminder does. Asleep
+// means it is not marked told either, so it goes out on the first pass after they wake.
+func (a *Adviser) tell(ctx context.Context, principalID string, was store.AdviceState, reason error) {
+	if a.Alerts == nil || was.Alerted {
+		return
+	}
+
+	rh, err := a.Store.Rhythm(ctx, principalID)
+	if err != nil {
+		a.Log.Error("could not read a rhythm", "principal", principalID, "err", err)
+		return
+	}
+	if !rhythm.Awake(rh, a.Store.Now()) {
+		return
+	}
+
+	delivered, err := a.Alerts.Alert(ctx, principalID,
+		"btw has stopped advising you",
+		// The gateway's own words, trimmed to what a lock screen can hold. What went wrong
+		// matters more than that something did: a rejected key and a retired model send
+		// somebody to two different fields.
+		sentence(reason.Error()))
+	if err != nil {
+		a.Log.Error("could not send an alert", "principal", principalID, "err", err)
+		return
+	}
+	if delivered <= 0 {
+		// Nothing reached a device, so nothing is recorded: the next pass tries again rather
+		// than marking somebody told about a message they never got.
+		return
+	}
+	if err := a.Store.MarkAdviceAlerted(ctx, principalID); err != nil {
+		a.Log.Error("could not record an alert", "principal", principalID, "err", err)
+	}
+}
+
+// sentence caps a gateway's error at something a lock screen can hold.
+func sentence(s string) string {
+	const limit = 140
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "…"
 }
 
 // budget is how much room the answer is given.

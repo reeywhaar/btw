@@ -19,8 +19,14 @@ self.addEventListener("push", (event) => {
     // showing nothing may revoke it.
   }
 
-  const body = data.text || "…";
-  event.waitUntil(showOne(body, data.nudge_id, data.silent === true));
+  const silent = data.silent === true;
+  // Two streams, and the absence of a kind is a nudge — so a payload written by a version
+  // that predates alerts still reads correctly.
+  event.waitUntil(
+    data.kind === "alert"
+      ? showAlert(data.title || "btw", data.text || "…", data.url, silent)
+      : showOne(data.text || "…", data.nudge_id, silent),
+  );
 });
 
 /**
@@ -71,11 +77,51 @@ async function showOne(body, nudgeID, silent) {
   });
 }
 
+/**
+ * Show something about btw itself rather than about a reminder.
+ *
+ * **A tag of its own**, and that is the whole point. showOne below closes every notification
+ * carrying "btw" before it shows another, so an alert sharing that tag would erase a nudge
+ * somebody had not read — and the next nudge would erase the alert. The Topic header does the
+ * same thing one hop earlier, at the push service, which is why the server sends this on its
+ * own channel too. Either one alone would still lose a message.
+ *
+ * A title of its own as well, since the body is a sentence about a setting and not the
+ * sentence somebody wrote down. No icon: iOS ignores the property and uses the app icon
+ * regardless, so an icon here would distinguish the two on some phones and not others, which
+ * is worse than not distinguishing them at all.
+ *
+ * No actions. Done and Drop answer a reminder, and there is none here.
+ */
+async function showAlert(title, body, url, silent) {
+  try {
+    for (const existing of await self.registration.getNotifications({
+      tag: "btw-alert",
+    })) {
+      existing.close();
+    }
+  } catch {
+    // Not supported, or refused. The tag is still asked for below.
+  }
+
+  await self.registration.showNotification(title, {
+    body,
+    tag: "btw-alert",
+    renotify: !silent,
+    silent,
+    data: { url: url || "/settings" },
+  });
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  const id = event.notification.data && event.notification.data.nudge_id;
+  const info = event.notification.data || {};
+  const id = info.nudge_id;
   const action = event.action;
+  // An alert says where it wants to land, because there is nothing to answer and the app's
+  // front door would leave somebody to find the setting themselves.
+  const target = info.url || "/";
 
   event.waitUntil(
     (async () => {
@@ -104,9 +150,22 @@ self.addEventListener("notificationclick", (event) => {
         includeUncontrolled: true,
       });
       for (const client of windows) {
-        if ("focus" in client) return client.focus();
+        if ("focus" in client) {
+          // Navigated as well as focused when somewhere particular was asked for: focusing a
+          // window already sitting on the reminder list would answer a tap by showing the one
+          // screen that does not explain it.
+          if (info.url && "navigate" in client) {
+            try {
+              return await client.navigate(target);
+            } catch {
+              // Some platforms refuse navigate on a client they did not open. Focus is still
+              // better than nothing.
+            }
+          }
+          return client.focus();
+        }
       }
-      return self.clients.openWindow("/");
+      return self.clients.openWindow(target);
     })(),
   );
 });

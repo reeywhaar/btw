@@ -89,4 +89,5 @@ var Derived = []Migration{
 	derivedBackupState,
 	derivedAdvice,
 	derivedAdviceLimited,
+	derivedAdviceAlerted,
 }

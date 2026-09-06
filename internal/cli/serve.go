@@ -87,7 +87,7 @@ func serve(ctx context.Context) error {
 	// Its own loop rather than a second job inside the scheduler's tick. The two run on
 	// different clocks for different reasons — one is a person's rhythm, the other is a
 	// quota — and a slow answer from a model must never delay a nudge.
-	go (&advise.Adviser{Store: st, Log: log}).Run(ctx)
+	go (&advise.Adviser{Store: st, Log: log, Alerts: scheduler}).Run(ctx)
 
 	// Run bails on its own when no agent was named, but saying so once at startup is worth
 	// more than a silence an operator has to interpret.
