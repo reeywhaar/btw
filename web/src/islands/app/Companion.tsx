@@ -516,83 +516,57 @@ function AdviceRow({ reminder }: { reminder: AdvisedReminder }) {
   );
 }
 
-/** How tall one day's chart is in its own coordinates. Arbitrary — only the ratios matter. */
-const chartHeight = 10;
-
 /**
- * A week, one line per day, with the rules that make a level readable.
+ * A week, one row per day, drawn as half-hour bars against the rules that make a level
+ * readable.
  *
- * Shading was the first version of this and could not answer the only question somebody asks of
- * it: whether a flat week is 0.5 or 1. A shade can be compared with the shade beside it and not
- * read on its own, and no legend fixes that — it makes somebody look away from the drawing to
- * decode it.
+ * Bars with gaps between them rather than one filled outline. The outline said "a continuous
+ * function of time", which is not what the answer is: it is forty-eight buckets, each holding
+ * one number, and two neighbours agreeing is a fact worth being able to see rather than a
+ * slab to be smoothed over.
  *
- * A line against a rule at 0.5 is read without looking away. Above the dashes is better than
- * usual, below is worse, and the top of the row is 1.
- *
- * Stepped rather than smoothed, because the answer *is* steps: a value covers its half hour and
- * says nothing about the moment between one and the next. A curve drawn through the points
- * would be drawing an opinion the model never gave.
+ * Divs rather than SVG, and that is forced. The chart has to fill whatever width it is given,
+ * which in SVG means preserveAspectRatio="none" — and that scales x and y by wildly different
+ * factors, so a one-pixel gap becomes a variable-width gap and a rounded corner becomes an
+ * ellipse. Flexbox gives both for free and in real pixels.
  */
 function Week({ curve }: { curve: number[][] }) {
   return (
-    <div className="flex flex-col gap-1 text-fg">
+    <div className="flex flex-col gap-1">
       {curve.map((day, i) => (
         <div key={i} className="flex items-center gap-2">
           <span className="w-7 shrink-0 text-[10px] text-faint">
             {dayNames[i]}
           </span>
-          <svg
-            viewBox={`0 0 ${day.length} ${chartHeight}`}
-            preserveAspectRatio="none"
-            className="h-8 flex-1 rounded-sm bg-plot"
+          <div
+            className="relative h-8 flex-1 overflow-hidden rounded-sm bg-plot"
             role="img"
             aria-label={`${dayNames[i]}, half-hourly`}
           >
-            {/* Six-hourly, so a shape can be placed against a time without counting cells. */}
+            {/* Six-hourly, so a shape can be placed against a time without counting bars. */}
             {[12, 24, 36].map((x) => (
-              <line
+              <div
                 key={x}
-                x1={x}
-                x2={x}
-                y1={0}
-                y2={chartHeight}
-                stroke="currentColor"
-                strokeOpacity={0.12}
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
+                className="absolute inset-y-0 w-px bg-fg/10"
+                style={{ left: `${(x / day.length) * 100}%` }}
               />
             ))}
             {/* The rule everything is read against: above it is better than usual. */}
-            <line
-              x1={0}
-              x2={day.length}
-              y1={chartHeight / 2}
-              y2={chartHeight / 2}
-              stroke="currentColor"
-              strokeOpacity={0.35}
-              strokeWidth={1}
-              strokeDasharray="3 3"
-              vectorEffect="non-scaling-stroke"
-            />
-            {/* Filled and not outlined. An outline drew a heavy black rule along the bottom of
-                every row — the baseline at zero, which carries no information — and turned a
-                shape somebody reads at a glance into a diagram of itself. */}
-            <path d={area(day)} className="fill-plot-ink" />
-            {/* Invisible, and the only way to read an exact number off a drawing. */}
-            {day.map((v, x) => (
-              <rect
-                key={x}
-                x={x}
-                y={0}
-                width={1}
-                height={chartHeight}
-                fill="transparent"
-              >
-                <title>{`${dayNames[i]} ${clockAt(x)} · ${v.toFixed(1)}`}</title>
-              </rect>
-            ))}
-          </svg>
+            <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-fg/30" />
+
+            <div className="absolute inset-0 flex items-end gap-px px-px">
+              {day.map((v, x) => (
+                <div
+                  key={x}
+                  className="flex-1 rounded-t-[2px] bg-plot-ink"
+                  style={{ height: `${Math.min(Math.max(v, 0), 1) * 100}%` }}
+                  // The exact value, since a height can be compared but not read. A native
+                  // tooltip costs one attribute and works wherever a pointer does.
+                  title={`${dayNames[i]} ${clockAt(x)} · ${v.toFixed(1)}`}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       ))}
       <div className="flex pl-9 text-[10px] text-faint">
@@ -602,20 +576,4 @@ function Week({ curve }: { curve: number[][] }) {
       </div>
     </div>
   );
-}
-
-/** The stepped top edge of one day: a value holds for its whole half hour. */
-function steps(day: number[]): string {
-  const y = (v: number) =>
-    chartHeight - Math.min(Math.max(v, 0), 1) * chartHeight;
-  const parts = day.flatMap((v, i) => [
-    `${i === 0 ? "M" : "L"}${i},${y(v)}`,
-    `L${i + 1},${y(v)}`,
-  ]);
-  return parts.join(" ");
-}
-
-/** That edge, closed down to the baseline so it is a shape rather than a line. */
-function area(day: number[]): string {
-  return `${steps(day)} L${day.length},${chartHeight} L0,${chartHeight} Z`;
 }

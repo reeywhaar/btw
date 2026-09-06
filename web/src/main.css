@@ -38,10 +38,13 @@
    * the left of a row and one running off it look the same, and a flat day is
    * indistinguishable from no day at all.
    *
-   * One hue for both, pale for the ground and deep for the ink, because they are two parts of
-   * one drawing rather than two things that meet. Grey ink on a grey ground was the first
-   * version and read as a screenshot of a chart; a warm pair reads as a chart. */
-  --color-plot: #f8e4d6;
+   * One hue for both, sand for the ground and a deeper brown for the ink, because they are two
+   * parts of one drawing rather than two things that meet. Grey ink on a grey ground was the
+   * first version and read as a screenshot of a chart; a warm pair reads as a chart.
+   *
+   * 3.67:1 between the two on the light theme and 6.30:1 on the dark. Graphics need 3:1, not
+   * the 4.5:1 text does, and the ground carries no text — the day's name sits outside it. */
+  --color-plot: #e7d8bf;
   --color-plot-ink: #7c6a5e;
 }
 
