@@ -16,6 +16,7 @@ internal/
   rhythm/            when somebody is nudged — pure
   pick/              what the nudge carries — pure
   webpush/           VAPID, RFC 8291 encryption, one POST
+  openrouter/        one question, put to the model an account has a key for
   nudge/             the scheduler: the impure half
   backup/            snapshots the databases and posts them to a backup agent
   api/               HTTP handlers, middleware, SPA serving
@@ -133,6 +134,19 @@ Everything about handing one encrypted message to one push service. See [push.md
 It knows nothing about reminders, nudges or accounts: it takes a `Subscription` and a byte
 slice. That is what lets its tests be RFC vectors rather than fixtures.
 
+## `internal/openrouter`
+
+One question, put to the gateway an account has a key for. See
+[companion.md](companion.md).
+
+The same seam as `internal/mail`: the store decides what the companion *is* and holds its key,
+and this is the half that opens a socket. Nothing here touches the database, and nothing in the
+store touches the network.
+
+Its tests hold a real conversation with a server started on a loopback port, for the reason
+`internal/mail`'s do. A mocked `http.Client` would assert that `net/http` was called; what is
+worth asserting is that a fault arriving inside a `200` is still a failure.
+
 ## `internal/nudge`
 
 The scheduler, and the only thing in the program that reads a clock and talks to the network
@@ -164,6 +178,8 @@ not delay the laptop's, and other people's slots are waiting behind this pass.
   round trip is in [push.md](push.md#the-test-vector-is-the-point).
 - `nudge` is tested end to end against a fake push service holding a real subscription
   keypair, so "a reminder arrives" is asserted by decrypting one.
+- `openrouter` is tested against a real server on a loopback port, because the case that looks
+  most like success — a fault delivered inside a `200` — is the one a mock would never catch.
 - One test asserts no `Access-Control-Allow-Origin` is ever emitted, because that absence is a
   security property.
 - One test asserts the rhythm endpoint leaks no scheduling detail, because that absence is a
@@ -178,4 +194,6 @@ device that has gone, a push that failed and why, a login refused, an account cr
 token, a cookie value, a push endpoint, or a password — hashed or otherwise.
 
 Reminder text is not logged either. It is the one thing in this database somebody would mind
-being read, and an operator has no reason to see it.
+being read, and an operator has no reason to see it. Nor is a companion's `about`, for the same
+reason and more strongly: it is prose about a person's life, written for a model and not for
+whoever runs the server.

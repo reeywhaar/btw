@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"btw/internal/mail"
+	"btw/internal/openrouter"
 )
 
 // open a store against a temporary file rather than :memory:. WAL behaves differently in
@@ -650,5 +651,100 @@ func TestABudgetIsBoundedOnlyByTheCeiling(t *testing.T) {
 	r.Budget = MaxBudget + 1
 	if err := s.SetRhythm(ctx, r); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("SetRhythm(%d) = %v, want ErrInvalid", MaxBudget+1, err)
+	}
+}
+
+func TestACompanionNeedsAKeyAndFallsBackToTheDefaultModel(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{Model: "m"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetCompanion(no key) = %v, want ErrInvalid", err)
+	}
+
+	// A model nobody named is the default rather than an empty string, so every row holds
+	// the model it will actually be asked with.
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "  sk-or-v1-abc  "}); err != nil {
+		t.Fatalf("SetCompanion(): %v", err)
+	}
+	got, err := s.Companion(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if got.Model != openrouter.DefaultModel {
+		t.Errorf("Model = %q, want %q", got.Model, openrouter.DefaultModel)
+	}
+	if got.APIKey != "sk-or-v1-abc" {
+		t.Errorf("APIKey = %q, want it trimmed", got.APIKey)
+	}
+}
+
+// Every word of about rides on every request the companion makes, so the limit is a token
+// bill as much as a column width — and a pasted CV should be refused at the form rather than
+// discovered on somebody's invoice.
+func TestAboutIsBoundedAndCountedInRunes(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	// Georgian, so a byte limit would refuse this and a rune limit accepts it. A paragraph
+	// is not four times as long for being written in a four-byte script.
+	fits := strings.Repeat("ა", AboutLimit)
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", About: fits}); err != nil {
+		t.Errorf("SetCompanion(%d runes) = %v, want it accepted", AboutLimit, err)
+	}
+
+	tooMuch := strings.Repeat("a", AboutLimit+1)
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", About: tooMuch}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetCompanion(%d runes) = %v, want ErrInvalid", AboutLimit+1, err)
+	}
+}
+
+// One row per account and not a singleton like the relay. A key spends its owner's credit and
+// the description is about their life, so one account's companion must be invisible to
+// another's.
+func TestOneAccountsCompanionIsNotAnothers(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	mine := testPrincipal(t, s)
+	theirs, err := s.CreatePrincipal(ctx, "someone-else", "a-good-password", RoleUser)
+	if err != nil {
+		t.Fatalf("CreatePrincipal(): %v", err)
+	}
+
+	if err := s.SetCompanion(ctx, mine.ID, openrouter.Settings{APIKey: "mine", About: "I sleep late"}); err != nil {
+		t.Fatalf("SetCompanion(): %v", err)
+	}
+
+	got, err := s.Companion(ctx, theirs.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if got.Configured() {
+		t.Errorf("Companion(other) = %+v, want the zero value", got)
+	}
+
+	// And forgetting one leaves the other alone.
+	if err := s.ClearCompanion(ctx, theirs.ID); err != nil {
+		t.Fatalf("ClearCompanion(): %v", err)
+	}
+	if got, err := s.Companion(ctx, mine.ID); err != nil || got.APIKey != "mine" {
+		t.Errorf("Companion(mine) = %+v, %v, want it untouched", got, err)
+	}
+}
+
+// A missing row is a state the interface renders, not a failure of the read.
+func TestNoCompanionIsNotAnError(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+
+	got, err := s.Companion(context.Background(), p.ID)
+	if err != nil {
+		t.Fatalf("Companion() = %v, want no error", err)
+	}
+	if got.Configured() {
+		t.Errorf("Companion() = %+v, want the zero value", got)
 	}
 }

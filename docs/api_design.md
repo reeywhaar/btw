@@ -208,6 +208,35 @@ an interval that has changed, or for a moment that may now be the middle of the 
 next tick works the whole thing out again, which is all a rhythm change has to do now that
 there is no plan to redraw.
 
+### Companion
+
+```
+GET    /api/companion                    {configured, model, key_set, about, default_model,
+                                          about_limit}
+PUT    /api/companion                    {api_key, model, about} → the above
+DELETE /api/companion                    → 204
+POST   /api/companion/test               {} → {model, tokens}
+```
+
+Behind `requireSession` and never `requireAdmin`: a companion is one account's, unlike the
+relay. Why, in [companion.md](companion.md#the-companion-is-an-accounts-not-the-instances).
+
+**The key never comes back out**, the way the relay's password does not. `key_set` is what the
+form needs, and saving with an empty `api_key` keeps the stored one — which is what lets
+somebody change their model without retyping a credential the form was never given. `about`
+does come back, because it is a text field somebody edits.
+
+`default_model` is sent so the form can offer it as a placeholder rather than hard-coding a
+model name in two languages, where the two would drift.
+
+`POST /api/companion/test` puts one real completion to **the values in the body**, reconciled
+against the stored ones by the same rule a save follows: an empty `api_key` means the stored
+key, an empty `model` the stored model or the default. The button sits inside the edit dialog,
+so it has to mean the fields beside it — and trying stores nothing, so a key that does not work
+is not left behind by having been tested. It reports which model actually answered, which is
+not always the one asked for. A refusal is a `502` carrying the gateway's own words, on the
+same argument as a refused mail send.
+
 ### Devices
 
 ```
@@ -267,7 +296,7 @@ patchRhythm                   PATCH  /api/rhythm
 ```
 
 **One module per root**, under `web/src/api/actions/` — `auth`, `reminders`, `rhythm`,
-`devices`, `nudges`, `push`. A single `actions.ts` holding all of them meant every component
+`devices`, `nudges`, `push`, `companion`. A single `actions.ts` holding all of them meant every component
 importing from one file that knew about every endpoint in the product, and the file only ever
 grows. There is no barrel re-exporting them: an import that names the root it came from says
 where to go and looking for it.

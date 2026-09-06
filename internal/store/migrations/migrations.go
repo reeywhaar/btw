@@ -76,6 +76,7 @@ var Main = []Migration{
 	mainRhythmSilent,
 	mainReminderNoDefaultFloor,
 	mainRhythmDropMinGap,
+	mainCompanion,
 }
 
 // Derived owns what the running process accumulated: sessions, the nudge waiting to go out,

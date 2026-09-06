@@ -106,6 +106,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/reminders/{id}/revive", s.requireSession(s.reviveReminder))
 	mux.Handle("DELETE /api/reminders/{id}", s.requireSession(s.deleteReminder))
 
+	// One account's own, never the instance's: the key spends their credit and the
+	// description is about their life. See docs/companion.md.
+	mux.Handle("GET /api/companion", s.requireSession(s.getCompanion))
+	mux.Handle("PUT /api/companion", s.requireSession(s.putCompanion))
+	mux.Handle("DELETE /api/companion", s.requireSession(s.deleteCompanion))
+	mux.Handle("POST /api/companion/test", s.requireSession(s.testCompanion))
+
 	mux.Handle("GET /api/rhythm", s.requireSession(s.getRhythm))
 	mux.Handle("PATCH /api/rhythm", s.requireSession(s.patchRhythm))
 

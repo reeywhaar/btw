@@ -7,4 +7,5 @@ export const qk = {
   devices: ["devices"] as const,
   recovery: ["recovery"] as const,
   relay: ["relay"] as const,
+  companion: ["companion"] as const,
 };

@@ -13,6 +13,7 @@ import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
 import { Select } from "@app/components/Select";
 import { Warning } from "@app/components/Warning";
+import { Companion } from "@app/islands/app/Companion";
 import {
   enable,
   installed,
@@ -28,6 +29,7 @@ export function Settings() {
       <ThisBrowser />
       <Devices />
       <RhythmPanel />
+      <Companion />
     </main>
   );
 }

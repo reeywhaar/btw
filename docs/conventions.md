@@ -18,6 +18,7 @@ minute on a particular device. Reminders persist; nudges happen.
 | **rhythm** | One person's answer to how often, and between which hours |
 | **device** | A browser that has agreed to receive nudges. What a person sees in settings |
 | **principal** | An account, admin or user |
+| **companion** | The model an account gave a key for, and what it is told about them |
 | **done** | Finished with, because it was done |
 | **drop** | Finished with, because it turned out not to be wanted |
 
@@ -121,7 +122,9 @@ back as a `400` rather than an empty result set that looks like a `404`.
   who will read it, not `not found: no reminder r_1`.
 - `context.Context` first parameter on anything that can block.
 - Injectable clocks: `store.SetClock` takes a `func() time.Time` so tests drive expiry
-  without sleeping. `webpush.Sender.SetClient` is the same idea for the network.
+  without sleeping. `webpush.Sender.SetClient` and `openrouter.SetEndpoint` are the same idea
+  for the network — the latter returns the function that puts the old value back, so a test
+  restores it with `defer` rather than remembering to.
 - A function that returns "this succeeded, and also something happened" returns a bool, not
   a sentinel error. `store.Session` returns `(Session, bool, error)` because the first
   version folded "the cookie wants re-issuing" into the error, and the obvious

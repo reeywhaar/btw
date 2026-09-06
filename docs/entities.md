@@ -181,6 +181,29 @@ endpoint alone left the old row in place, both live, and one nudge went out twic
 The endpoint **never leaves the process**. It is a capability: anybody holding it and a VAPID
 key can put text on that lock screen. A test asserts it never appears in a response.
 
+### `companion`
+
+```
+principal_id, api_key, model, about, updated_at
+```
+
+The model an account has given a key for, and what it is told about them. One row per
+principal and **not a singleton like `smtp`** — the key spends its owner's credit and `about`
+describes one person's life, neither of which is the instance's to hold. `ON DELETE CASCADE`,
+so forgetting an account forgets its key with it.
+
+`api_key` is stored as written, for the reason `smtp.password` is: there is no vault here, and
+a reversible scramble would only make it look protected. It is never sent back out — the API
+carries `key_set` instead.
+
+`model` is never empty. A save that names none stores the default rather than a blank, so every
+row holds the model it will actually be asked with and no reader has to know the fallback.
+
+`about` is bounded at 2,000 runes, counted in runes rather than bytes because a paragraph is
+not four times as long for being written in a four-byte script. The bound is a token bill as
+much as a column width: every word of it rides on every request the companion makes. See
+[companion.md](companion.md).
+
 ### `vapid`
 
 ```

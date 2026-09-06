@@ -14,6 +14,7 @@ import (
 	"testing/fstest"
 
 	"btw/internal/config"
+	"btw/internal/openrouter"
 	"btw/internal/store"
 	"btw/internal/webpush"
 )
@@ -796,5 +797,166 @@ func TestSomebodyElsesReminderCannotBeEdited(t *testing.T) {
 	got, _ := h.store.Reminder(h.Context(), other.ID, theirs.ID)
 	if got.Note != "" {
 		t.Errorf("their reminder was written to: %q", got.Note)
+	}
+}
+
+func TestACompanionKeyNeverComesBackOut(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	saved := h.do("PUT", "/api/companion", map[string]any{
+		"api_key": "sk-or-v1-secret", "model": "minimax/minimax-m3:free", "about": "I sleep late",
+	})
+	defer saved.Body.Close()
+	if saved.StatusCode != http.StatusOK {
+		t.Fatalf("PUT = %s", saved.Status)
+	}
+
+	resp := h.do("GET", "/api/companion", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if bytes.Contains(body, []byte("sk-or-v1-secret")) {
+		t.Errorf("the companion key reached the client: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"key_set":true`)) {
+		t.Errorf("key_set missing, so the form cannot tell whether one is stored: %s", body)
+	}
+}
+
+// Changing the model or rewriting a description must not mean retyping a credential the form
+// was never given — the same rule as the relay's password.
+func TestSavingACompanionWithoutAKeyKeepsTheStoredOne(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+
+	h.do("PUT", "/api/companion", map[string]any{
+		"api_key": "sk-or-v1-secret", "model": "minimax/minimax-m3:free", "about": "I sleep late",
+	}).Body.Close()
+
+	h.do("PUT", "/api/companion", map[string]any{
+		"api_key": "", "model": "minimax/minimax-m3", "about": "I sleep late and go to bed at four",
+	}).Body.Close()
+
+	set, err := h.store.Companion(h.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if set.APIKey != "sk-or-v1-secret" {
+		t.Errorf("api_key = %q, want the stored one kept", set.APIKey)
+	}
+	if set.Model != "minimax/minimax-m3" {
+		t.Errorf("model = %q, want the correction applied", set.Model)
+	}
+}
+
+// One account's own, and never the instance's: the key spends its owner's credit and the
+// description is about their life.
+func TestACompanionIsNotSharedBetweenAccounts(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "sk-or-v1-mine"}).Body.Close()
+
+	h.signInAs("someone-else", store.RoleUser)
+	resp := h.do("GET", "/api/companion", nil)
+	defer resp.Body.Close()
+	var got struct {
+		Configured bool `json:"configured"`
+		KeySet     bool `json:"key_set"`
+	}
+	decodeBody(t, resp, &got)
+	if got.Configured || got.KeySet {
+		t.Error("another account's companion is visible")
+	}
+}
+
+// The button lives inside the edit dialog, so it must refuse rather than reach for a key that
+// is neither in the form nor already stored.
+func TestTestingACompanionWithoutAKeyAnywhereIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	resp := h.do("POST", "/api/companion/test", map[string]any{"api_key": "", "model": ""})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %s, want 400", resp.Status)
+	}
+}
+
+// The button sits beside the field, so it has to mean the field. A press that quietly tried
+// the stored key instead would teach somebody that the key they are looking at works.
+func TestTheKeyInTheDialogIsTriedAndNotTheStoredOne(t *testing.T) {
+	var tried string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tried = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"model":"m","choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":3}}`)
+	}))
+	defer srv.Close()
+	defer openrouter.SetEndpoint(srv.URL)()
+
+	h := newHarness(t)
+	p := h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "stored-key"}).Body.Close()
+
+	h.do("POST", "/api/companion/test", map[string]any{
+		"api_key": "typed-key", "model": "",
+	}).Body.Close()
+	if tried != "Bearer typed-key" {
+		t.Errorf("tried %q, want the key in the dialog", tried)
+	}
+
+	// And trying stores nothing: a key that turns out not to work must not be left behind by
+	// having been tested.
+	set, err := h.store.Companion(h.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if set.APIKey != "stored-key" {
+		t.Errorf("stored key = %q, want trying to have changed nothing", set.APIKey)
+	}
+
+	// An empty field means the stored one, under the same rule a save follows — which is what
+	// lets somebody try a new model against a key they never retyped.
+	h.do("POST", "/api/companion/test", map[string]any{"api_key": "", "model": ""}).Body.Close()
+	if tried != "Bearer stored-key" {
+		t.Errorf("tried %q, want the stored key when the field is empty", tried)
+	}
+}
+
+func TestForgettingACompanionLeavesNothingBehind(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "k", "about": "I sleep late"}).Body.Close()
+
+	resp := h.do("DELETE", "/api/companion", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %s, want 204", resp.Status)
+	}
+
+	// A delete and not a disabled flag: switching this off withdraws a credential and a
+	// description of somebody's life, and leaving either behind is not what they asked for.
+	set, err := h.store.Companion(h.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if set.APIKey != "" || set.About != "" {
+		t.Errorf("Companion() = %+v, want nothing left", set)
+	}
+}
+
+func TestACompanionNeedsASession(t *testing.T) {
+	h := newHarness(t)
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/api/companion"},
+		{"PUT", "/api/companion"},
+		{"DELETE", "/api/companion"},
+		{"POST", "/api/companion/test"},
+	} {
+		resp := h.do(route.method, route.path, map[string]any{})
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s %s = %s, want 401", route.method, route.path, resp.Status)
+		}
 	}
 }
