@@ -134,7 +134,7 @@ notifications, which it announces by existing.
 ### Reminders
 
 ```
-GET    /api/reminders[?binned=true]      {reminders: [...]}
+GET    /api/reminders                    {reminders: [...]}
 POST   /api/reminders                    {text} → the reminder
 PATCH  /api/reminders/{id}               {text?, note?} → the reminder
 POST   /api/reminders/{id}/bin           → 204
@@ -145,8 +145,9 @@ DELETE /api/reminders/{id}               → 204
 **`POST` takes one field.** Typing a sentence is the entire path to a reminder existing;
 everything else has a default that is deliberately invisible.
 
-**The list and the bin are two calls, not one call with a filter**, because they are two
-different screens and the bin is the one nobody looks at.
+**The bin has a route of its own**, below, rather than `?binned=true` on this one. It was a
+parameter while the second thing was "finished reminders" — a slice of the same collection —
+and stopped being one when the bin became a place with its own life and its own sweep.
 
 `PATCH` takes pointers, so **absent leaves a field alone and empty clears it** — which is how
 a description is deleted without also retyping the sentence. It changes wording only: ending a
@@ -165,6 +166,22 @@ by hand, and anything left in the bin thirty days is deleted by a sweep.
 **Binning an already-binned reminder is `204`, not an error.** A notification that has sat on a
 lock screen since yesterday can be answered after the thing was already binned in the app, and
 the person pressing it wanted it gone either way.
+
+### Bin
+
+```
+GET    /api/bin                          {reminders: [...]}
+DELETE /api/bin                          → 204
+```
+
+What has been binned and not yet thrown away. A reminder gets there through
+`POST /api/reminders/{id}/bin` and comes back through `/restore`; `DELETE /api/reminders/{id}`
+takes one out for good, and `DELETE /api/bin` takes all of them — the same end the thirty-day
+sweep reaches on its own, asked for now.
+
+**No confirmation server-side.** The interface asks, and a second refusal here would guard
+against a request nobody can make by accident: it takes a session, a same-origin fetch and a
+deliberate `DELETE`.
 
 ### Nudges
 

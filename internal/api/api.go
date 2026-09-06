@@ -123,6 +123,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/reminders/{id}/restore", s.requireSession(s.restoreReminder))
 	mux.Handle("DELETE /api/reminders/{id}", s.requireSession(s.deleteReminder))
 
+	// The bin is a place rather than a slice of the list, so it has a route rather than a
+	// query parameter. See docs/conventions.md.
+	mux.Handle("GET /api/bin", s.requireSession(s.listBin))
+	mux.Handle("DELETE /api/bin", s.requireSession(s.emptyBin))
+
 	// One account's own, never the instance's: the key spends their credit and the
 	// description is about their life. See docs/companion.md.
 	mux.Handle("GET /api/companion", s.requireSession(s.getCompanion))

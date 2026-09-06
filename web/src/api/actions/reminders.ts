@@ -9,12 +9,17 @@ export type Reminder = {
   binned_at: number | null;
 };
 
-// Live and finished are two calls rather than one call with a filter, because they are two
-// different screens and the bin is the one nobody looks at.
-export const getReminders = (done = false) =>
-  request<{ reminders: Reminder[] }>(
-    `/api/reminders${done ? "?done=true" : ""}`,
-  );
+export const getReminders = () =>
+  request<{ reminders: Reminder[] }>("/api/reminders");
+
+/**
+ * The bin has a route rather than a parameter, because it is a place rather than a slice of
+ * the list — its own screen, its own life, its own sweep.
+ */
+export const getBin = () => request<{ reminders: Reminder[] }>("/api/bin");
+
+/** Throws away everything in it now, rather than waiting thirty days. */
+export const deleteBin = () => request<void>("/api/bin", { method: "DELETE" });
 
 export const postReminders = (text: string) =>
   request<Reminder>("/api/reminders", { method: "POST", body: { text } });

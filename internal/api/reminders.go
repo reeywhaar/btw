@@ -29,9 +29,7 @@ func reminderJSON(r store.Reminder) map[string]any {
 func (s *Server) listReminders(w http.ResponseWriter, r *http.Request) {
 	// Ended ones are a separate ask rather than a filter on one list, because they are two
 	// different screens and the ended list is the one nobody looks at.
-	done := r.URL.Query().Get("done") == "true"
-
-	list, err := s.store.Reminders(r.Context(), principal(r).ID, done)
+	list, err := s.store.Reminders(r.Context(), principal(r).ID, false)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -145,5 +143,39 @@ func (s *Server) deleteReminder(w http.ResponseWriter, r *http.Request) {
 	}
 	s.adviceForgotten(r, id)
 	s.adviceStale(r, principal(r).ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listBin is what has been binned and not yet thrown away.
+//
+// Its own route rather than a filter on the list, because after the bin stopped being "finished
+// reminders" it stopped being a slice of the same collection. It is a place, with its own life
+// and its own sweep, and `?binned=true` said "same thing, different rows".
+func (s *Server) listBin(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.Reminders(r.Context(), principal(r).ID, true)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, rem := range list {
+		out = append(out, reminderJSON(rem))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reminders": out})
+}
+
+// emptyBin throws away everything in it now, rather than waiting thirty days.
+//
+// No confirmation here. The interface asks — see the dialog — and a second refusal on this side
+// would be guarding against a request nobody can make by accident: it takes a session, a
+// same-origin fetch and a deliberate DELETE.
+func (s *Server) emptyBin(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	n, err := s.store.EmptyBin(r.Context(), p.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("bin emptied", "principal", p.ID, "count", n)
 	w.WriteHeader(http.StatusNoContent)
 }

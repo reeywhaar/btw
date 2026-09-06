@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  deleteBin,
   deleteRemindersById,
+  getBin,
   getReminders,
   postReminders,
   postRemindersByIdBin,
@@ -12,6 +14,7 @@ import {
 } from "@app/api/actions/reminders";
 import { Button } from "@app/components/Button";
 import { Dialog } from "@app/components/Dialog";
+import { Note } from "@app/components/Note";
 import { TextArea } from "@app/components/TextArea";
 import { TextField } from "@app/components/TextField";
 import { IconButton } from "@app/components/IconButton";
@@ -25,15 +28,7 @@ export function Reminders() {
     void client.invalidateQueries({ queryKey: ["reminders"] });
   };
 
-  const live = useQuery({
-    queryKey: qk.reminders(false),
-    queryFn: () => getReminders(false),
-  });
-  const binned = useQuery({
-    queryKey: qk.reminders(true),
-    queryFn: () => getReminders(true),
-    enabled: showBin,
-  });
+  const live = useQuery({ queryKey: qk.reminders, queryFn: getReminders });
 
   return (
     <main className="px-5">
@@ -53,33 +48,18 @@ export function Reminders() {
       </ul>
 
       <button
-        onClick={() => setShowBin(!showBin)}
+        onClick={() => setShowBin(true)}
         className="mt-8 text-sm text-faint underline-offset-4 hover:text-fg hover:underline"
       >
         {/* No count. Not here, not on a tag, not in the title, not on the icon. */}
-        {showBin ? "hide bin" : "bin"}
+        bin
       </button>
 
-      {showBin && (
-        <>
-          <ul className="mt-3 divide-y divide-line">
-            {binned.data?.reminders.map((r) => (
-              <BinnedRow key={r.id} reminder={r} onDone={invalidate} />
-            ))}
-            {binned.isSuccess && binned.data.reminders.length === 0 && (
-              <li className="py-4 text-sm text-faint">The bin is empty.</li>
-            )}
-          </ul>
-          {binned.isSuccess && binned.data.reminders.length > 0 && (
-            // Said once, under the list, rather than as a countdown on each row. A number
-            // ticking down beside something somebody has finished with is exactly the kind
-            // this product exists not to show.
-            <p className="mt-3 text-sm text-faint">
-              Anything left here for thirty days is thrown away.
-            </p>
-          )}
-        </>
-      )}
+      <BinDialog
+        open={showBin}
+        onClose={() => setShowBin(false)}
+        onChanged={invalidate}
+      />
     </main>
   );
 }
@@ -121,30 +101,64 @@ function Compose({ onDone }: { onDone: () => void }) {
 
 function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
+  const client = useQueryClient();
+
+  // Binning leaves the row where it is, greyed, with a way back — rather than making it
+  // vanish under the finger that pressed it.
+  //
+  // The row is marked in the cache rather than kept in a list of its own, because a reminder
+  // already carries `binned_at` and the server has just set it. Nothing here invents a state:
+  // the row is showing what is true, a moment before the list is asked again.
+  //
+  // It lasts until the list is refetched — a reload, or writing something else down. That is
+  // the right length: undo is for the press that was a mistake, and a mistake is noticed
+  // immediately or not at all.
+  const mark = (at: number | null) =>
+    client.setQueryData<{ reminders: Reminder[] }>(qk.reminders, (old) =>
+      old
+        ? {
+            reminders: old.reminders.map((r) =>
+              r.id === reminder.id ? { ...r, binned_at: at } : r,
+            ),
+          }
+        : old,
+    );
+  const settle = () => {
+    void client.invalidateQueries({ queryKey: qk.bin });
+  };
+
   const bin = useMutation({
     mutationFn: postRemindersByIdBin,
-    onSuccess: onDone,
+    onSuccess: () => {
+      mark(Math.floor(Date.now() / 1000));
+      settle();
+    },
   });
+  const undo = useMutation({
+    mutationFn: postRemindersByIdRestore,
+    onSuccess: () => {
+      mark(null);
+      settle();
+    },
+  });
+
+  const isBinned = reminder.binned_at !== null;
 
   return (
     <>
-      {/* items-baseline, not items-start or items-center. The text is 16px and the buttons
-          are 14px inside padding and a border, so aligning the boxes leaves the first line
-          sitting higher than the labels beside it. Baseline aligns what the eye reads.
-
-          And not items-center, because a reminder wraps: centring two lines against the
-          buttons pushes the first above them and the second below. Baseline uses the *first*
-          line's baseline, so a reminder of any height starts level with Done. */}
       {/* items-start, not items-baseline. Baseline was matching the sentence to a button's
           *label*; an icon button has no text in it, so there is nothing to align to and the
           marks drifted. Aligning the tops and giving the sentence a hair of padding puts its
           first line level with the marks and lets it wrap downward. */}
-      <li className="flex items-start gap-1 py-2">
+      <li
+        className={`flex items-start gap-1 py-2 ${isBinned ? "text-faint" : ""}`}
+      >
         {/* The sentence is the way in, because it is the thing somebody is looking at. Its
             own button rather than a click on the row, so it does not swallow the bin
             or nest one control inside another. */}
         <button
           onClick={() => setEditing(true)}
+          disabled={isBinned}
           className="min-w-0 flex-1 py-1.5 text-left"
           aria-label={`Edit ${reminder.text}`}
         >
@@ -157,13 +171,26 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
             </span>
           )}
         </button>
-        {/* One mark. It was a tick and a cross, which ended a reminder identically and
-            differed only in the word beside them — a to-do list's *done* and *drop*, where the
-            second existed so that finishing something never started did not mean claiming
-            otherwise. A bin claims neither, and says where the thing actually goes. */}
-        <IconButton label="Bin" onClick={() => bin.mutate(reminder.id)}>
-          <BinIcon />
-        </IconButton>
+        {isBinned ? (
+          // A word rather than a mark. Undo is the opposite of the thing just pressed, and an
+          // arrow beside a bin would be one icon asking to be told apart from another.
+          <button
+            onClick={() => undo.mutate(reminder.id)}
+            className="shrink-0 py-1.5 text-sm underline-offset-4 hover:text-fg hover:underline"
+          >
+            undo
+          </button>
+        ) : (
+          /* One mark. It was a tick and a cross, which ended a reminder identically and
+             differed only in the word beside them — a to-do list's *done* and *drop*, where
+             the second existed so that finishing something never started did not mean
+             claiming otherwise. A bin claims neither, and says where the thing goes. */
+          <IconButton label="Bin" onClick={() => bin.mutate(reminder.id)}>
+            {/* Fainter than the sentence beside it. It is on every reminder and wanted on
+                almost none of them, so it should be findable rather than present. */}
+            <BinIcon className="opacity-40" />
+          </IconButton>
+        )}
       </li>
 
       <EditDialog
@@ -264,6 +291,101 @@ function EditDialog({
       )}
       {remove.error && (
         <p className="text-sm text-accent">{remove.error.message}</p>
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * The bin, as a place somebody goes rather than a list unfolding under the one they were
+ * reading.
+ *
+ * It was inline and that was wrong in a small way that adds up: opening it pushed nothing, but
+ * it put a second list of things somebody has finished with directly beneath the list of things
+ * they have not. A dialog is a room you leave.
+ */
+function BinDialog({
+  open,
+  onClose,
+  onChanged,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const client = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+
+  const bin = useQuery({
+    queryKey: qk.bin,
+    queryFn: getBin,
+    enabled: open,
+  });
+
+  const changed = () => {
+    void client.invalidateQueries({ queryKey: qk.bin });
+    onChanged();
+  };
+  const empty = useMutation({
+    mutationFn: deleteBin,
+    onSuccess: () => {
+      setConfirming(false);
+      changed();
+    },
+  });
+
+  // Nothing left over from a previous visit: a dialog reopened on "really?" would be one press
+  // from throwing away something somebody came back to rescue.
+  useEffect(() => {
+    if (!open) setConfirming(false);
+  }, [open]);
+
+  const items = bin.data?.reminders ?? [];
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Bin"
+      footer={
+        <>
+          <Button variant="link" onClick={onClose}>
+            Close
+          </Button>
+          {items.length > 0 &&
+            (confirming ? (
+              // Asked, because this is the one press here that cannot be undone. The per-row
+              // delete is one thing at a time and this is everything at once.
+              <Button disabled={empty.isPending} onClick={() => empty.mutate()}>
+                {empty.isPending ? "clearing…" : "Yes, throw it all away"}
+              </Button>
+            ) : (
+              <Button variant="quiet" onClick={() => setConfirming(true)}>
+                Clean up
+              </Button>
+            ))}
+        </>
+      }
+    >
+      {items.length === 0 && bin.isSuccess && <Note>The bin is empty.</Note>}
+
+      {items.length > 0 && (
+        <ul className="divide-y divide-line">
+          {items.map((r) => (
+            <BinnedRow key={r.id} reminder={r} onDone={changed} />
+          ))}
+        </ul>
+      )}
+
+      {items.length > 0 && (
+        // Said once, under the list, rather than as a countdown on each row. A number ticking
+        // down beside something somebody has finished with is exactly the kind this product
+        // exists not to show.
+        <Note>Anything left here for thirty days is thrown away.</Note>
+      )}
+
+      {empty.error && (
+        <p className="text-sm text-accent">{empty.error.message}</p>
       )}
     </Dialog>
   );

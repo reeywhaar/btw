@@ -274,7 +274,7 @@ func TestWriteOneDownAndReadItBack(t *testing.T) {
 	}
 }
 
-func TestEndingAReminderTakesItOffTheList(t *testing.T) {
+func TestBinningAReminderTakesItOffTheList(t *testing.T) {
 	h := newHarness(t)
 	h.signIn()
 
@@ -300,9 +300,9 @@ func TestEndingAReminderTakesItOffTheList(t *testing.T) {
 	var done struct {
 		Reminders []json.RawMessage `json:"reminders"`
 	}
-	decodeBody(t, h.do("GET", "/api/reminders?done=true", nil), &done)
+	decodeBody(t, h.do("GET", "/api/bin", nil), &done)
 	if len(done.Reminders) != 1 {
-		t.Errorf("done list holds %d, want 1", len(done.Reminders))
+		t.Errorf("the bin holds %d, want 1", len(done.Reminders))
 	}
 }
 
@@ -1409,5 +1409,72 @@ func TestAnHourOutsideADayIsStillRefused(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("PATCH %v = %s, want 400", body, resp.Status)
 		}
+	}
+}
+
+// The bin has a route rather than a parameter, because after it stopped being "finished
+// reminders" it stopped being a slice of the same collection.
+func TestTheBinIsItsOwnPlace(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+
+	kept, err := h.store.CreateReminder(h.Context(), p.ID, "still wanted")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	gone, _ := h.store.CreateReminder(h.Context(), p.ID, "finished with")
+	h.do("POST", "/api/reminders/"+gone.ID+"/bin", nil).Body.Close()
+
+	var list, bin struct {
+		Reminders []struct {
+			ID string `json:"id"`
+		} `json:"reminders"`
+	}
+	decodeBody(t, h.do("GET", "/api/reminders", nil), &list)
+	decodeBody(t, h.do("GET", "/api/bin", nil), &bin)
+
+	if len(list.Reminders) != 1 || list.Reminders[0].ID != kept.ID {
+		t.Errorf("the list holds %+v, want only the one not binned", list.Reminders)
+	}
+	if len(bin.Reminders) != 1 || bin.Reminders[0].ID != gone.ID {
+		t.Errorf("the bin holds %+v, want only the binned one", bin.Reminders)
+	}
+}
+
+// Clean up reaches everything in one account's bin and nothing else — not the list, and not
+// somebody else's bin.
+func TestEmptyingTheBinTakesOnlyWhatIsInIt(t *testing.T) {
+	h := newHarness(t)
+	mine := h.signIn()
+
+	kept, err := h.store.CreateReminder(h.Context(), mine.ID, "still wanted")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	gone, _ := h.store.CreateReminder(h.Context(), mine.ID, "finished with")
+	h.do("POST", "/api/reminders/"+gone.ID+"/bin", nil).Body.Close()
+
+	// Somebody else, with something in their bin too. The cookie is put back afterwards
+	// rather than signing in again, since signing in creates the account.
+	mineCookie := h.cookie
+	theirs := h.signInAs("someone-else", store.RoleUser)
+	safe, _ := h.store.CreateReminder(h.Context(), theirs.ID, "not yours to throw away")
+	h.store.BinReminder(h.Context(), theirs.ID, safe.ID)
+
+	h.cookie = mineCookie
+	resp := h.do("DELETE", "/api/bin", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %s, want 204", resp.Status)
+	}
+
+	if binned, _ := h.store.Reminders(h.Context(), mine.ID, true); len(binned) != 0 {
+		t.Errorf("my bin holds %d, want it emptied", len(binned))
+	}
+	if open, _ := h.store.Reminders(h.Context(), mine.ID, false); len(open) != 1 || open[0].ID != kept.ID {
+		t.Errorf("my list holds %+v, want it untouched", open)
+	}
+	if binned, _ := h.store.Reminders(h.Context(), theirs.ID, true); len(binned) != 1 {
+		t.Error("emptying one bin reached another account's")
 	}
 }

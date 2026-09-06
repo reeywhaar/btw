@@ -293,3 +293,21 @@ func (s *Store) SweepBin(ctx context.Context) (int, error) {
 	}
 	return int(n), nil
 }
+
+// EmptyBin deletes everything one person has in the bin, and reports how many.
+//
+// The same end the sweep reaches on its own after thirty days, asked for now. Scoped to the
+// account rather than the table, which the sweep is not — a sweep has nobody to be wrong about
+// and this has exactly one.
+func (s *Store) EmptyBin(ctx context.Context, principalID string) (int, error) {
+	res, err := s.main.ExecContext(ctx,
+		`DELETE FROM reminders WHERE principal_id = ? AND binned_at IS NOT NULL`, principalID)
+	if err != nil {
+		return 0, fmt.Errorf("empty bin: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil
+	}
+	return int(n), nil
+}
