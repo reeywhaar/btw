@@ -2,9 +2,9 @@ name: publish
 
 on:
   # Publishing is off for now. Uncomment to resume.
-  # push:
-  #   branches: [main]
-  #
+  push:
+    branches: [main]
+
   # Kept so the workflow has a trigger and can be run by hand — both to retry a failed
   # publish without an empty commit, and to publish deliberately while the push trigger
   # above is commented out.
