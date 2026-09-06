@@ -244,19 +244,26 @@ DELETE /api/companion                    → 204
 POST   /api/companion/test               {} → {model, tokens}
 GET    /api/companion/advice             {reminders: [{id, text, advised, categories?,
                                           exclusive?, curve?, advised_at?}], days, windows}
-POST   /api/companion/advice/refresh     {} → 202
+POST   /api/companion/advice/refresh     {} → the above, once it has asked
 ```
 
 `GET /api/companion/advice` is the open list with what the companion said about each, and
 carries a `curve` **only when it is the shape the weighting actually reads** — an answer the
-program ignores is not something to draw. `days` and `windows` come with it so the screen
-cannot disagree with the server about the size of a week.
+program ignores is not something to draw. When it is not, `shape` names what arrived instead,
+so a screen can say *it sent 7x24* rather than leaving somebody to find it in a log. `days` and
+`windows` come with it so the screen cannot disagree with the server about the size of a week,
+and `stale`, `advised_at` and `error` say whether an answer is still owed.
 
-`POST /api/companion/advice/refresh` answers **202**, because nothing has happened yet: it
-marks the advice stale and wakes the loop, and the answer arrives whenever the model gets round
-to it. Asking inside the request would hold it open for minutes for a result nothing on that
-screen is waiting for. It cannot be used to spend a quota — a woken loop still declines to ask
-when nothing has changed since the last answer.
+`POST /api/companion/advice/refresh` **asks the companion and waits**, answering with the advice
+as it then stands. It is the longest request in the product by some way — as long as a model
+takes — and that is the point: somebody presses it to see a change, and a 202 telling them to
+come back makes them judge one they cannot see.
+
+It marks the advice stale first, because a look declines when nothing has changed. Rate limited
+at four a minute, since it makes an outbound request on the caller's behalf against a quota with
+fifty a day in it; the screen holds the button for twenty seconds as well, which is the cooldown
+for the screen being used rather than a ceiling. A failure is a `502` carrying the gateway's own
+words.
 
 Behind `requireSession` and never `requireAdmin`: a companion is one account's, unlike the
 relay. Why, in [companion.md](companion.md#the-companion-is-an-accounts-not-the-instances).

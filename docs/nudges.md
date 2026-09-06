@@ -171,14 +171,20 @@ reminder. That is what makes the whole feature optional at the level of one remi
 than one account: something written a minute ago, before the next round of questions, weighs
 precisely what it would have weighed before any of this existed.
 
-When there is advice it is a **curve**: forty-eight numbers from 0 to 1, one for each half hour
-of the day, read against the person's own local clock — converted once in `internal/rhythm` and
-an integer index everywhere after. The number for the current half hour is stretched onto a
-range and multiplied in:
+When there is advice it is a **curve** over the person's week: seven days of forty-eight half
+hours, held as numbers from 0 to 1 and read against their own local clock — converted once in
+`internal/rhythm`, and two integer indexes everywhere after. The number for the current half
+hour is stretched onto a range and multiplied in:
 
 ```
 advice = 0.5 + confidence        confidence 0 → 0.5,  0.5 → 1.0,  1 → 1.5
 ```
+
+The companion is not *asked* for 336 numbers — it is asked for the stretches it has an opinion
+about, and those are expanded into the grid on arrival. Why, in
+[companion.md](companion.md#what-it-asks-for). What matters here is the consequence: anything
+the companion did not mention arrives as 0.5, so a reminder it said one thing about is neutral
+for the rest of the week rather than damped by omission.
 
 **Nothing is a special case.** No threshold, no in-or-out, no separate rule for a reminder
 wanting somebody's full attention. A curve of 0.5 throughout is a companion with no opinion and
@@ -186,33 +192,22 @@ comes to exactly 1, which is the same answer as never having been asked — and 
 property the whole design hangs on.
 
 **Never zero, and not by rounding — by construction.** The floor is the guarantee: the
-companion moves a reminder around the day and does not get to remove one. Silencing is a
+companion moves a reminder around the week and does not get to remove one. Silencing is a
 person's decision with exactly one expression, priority zero, and a model able to reach the
 same outcome by answering zeroes would be a second, invisible way for something to stop
 arriving.
 
 Three to one between the best half hour and the worst. Gentler than the twelve to one the
-windows this replaced could reach, and deliberately so: a continuous curve applies its opinion
-to *every* hour rather than to the handful inside a window, so the same strength per hour adds
-up to much more over a day. Staleness runs to four and keeps climbing underneath either way, so
-a reminder the companion likes nowhere still surfaces — later, and by a route nothing here has
-to special-case.
+windows this replaced could reach, and deliberately so: a curve applies its opinion to *every*
+hour rather than to the handful inside a window, so the same strength per hour adds up to much
+more over a week. Staleness runs to four and keeps climbing underneath either way, so a
+reminder the companion likes nowhere still surfaces — later, and by a route nothing here has to
+special-case.
 
 The advice applies to a **never-nudged** reminder too, rather than being skipped along with the
 staleness arithmetic. It is tempting to let something just written down arrive at once, but the
 first arrival is the one most worth placing well, and maximal staleness already puts it far
 enough ahead that the multiplier decides which hour rather than whether.
-
-##### One day, not one week
-
-Forty-eight numbers cannot tell a Saturday from a Tuesday. A reminder that only makes sense at
-the weekend has no way to say so, and that is a real loss.
-
-It is the trade for asking a model something it can actually do. A number per half hour of a
-*week* is 336 of them per reminder — a token bill, but more importantly far more arithmetic
-than a model does reliably, and a curve that drifts out of alignment is worse than no curve
-because it is confidently wrong about which hour is which. The week is a change to one constant
-and one paragraph of the prompt if it turns out to be wanted.
 
 ### Nothing eligible sends nothing at all
 

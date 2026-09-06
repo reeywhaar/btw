@@ -351,12 +351,16 @@ func TestTheQuestionSaysWhatTheAnswerCannotDo(t *testing.T) {
 		"Almost everything has some shape",
 		// A worked example is the single most effective thing in here: it is the difference
 		// between a model knowing what a shape looks like and guessing at one.
-		"For example, for \"wash dishes\"",
-		// Sparseness is the whole point of the format: an opinion is a line and no opinion is
-		// no lines, so a model under pressure says less rather than saying nothing at length.
-		"Say only what you have an opinion about",
+		"For \"wash dishes\"",
+		// Sparseness is the whole point of the format. Without it a model describes all
+		// twenty-four hours out of politeness, at the ends of the scale, and the week comes back
+		// decisive about hours it was never asked to have an opinion on.
+		"Most of a week should go unmentioned",
 		// The rule that lets a model write a broad stroke and then narrow it.
 		"the later one wins",
+		// What separates a low score from silence, and the thing the first examples taught
+		// wrongly: being reminded at a useless hour is the cost, not being unable to act.
+		"raising it then would be a waste",
 		// Arbitrary edges, which is the requirement that ruled out fixed buckets.
 		"the middle of the morning to the middle of the day",
 		// The distinction that carries actual scheduling meaning.
@@ -475,7 +479,7 @@ func TestWhatSomebodyWritesAboutThemselvesIsNeverATemplate(t *testing.T) {
 	}
 
 	// And the standing half is untouched by any of it.
-	if !strings.Contains(System(), "Say only what you have an opinion about") {
+	if !strings.Contains(System(), "Most of a week should go unmentioned") {
 		t.Error("the system prompt was affected by what somebody wrote about themselves")
 	}
 

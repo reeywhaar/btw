@@ -34,29 +34,29 @@ Answer with a JSON object of the form {"results": [...]}, holding one entry per 
 
 The curve is the answer. Everything else is context.
 
-**Say only what you have an opinion about.** Every hour you do not mention counts as 0.5, which means no opinion and changes nothing. There is no need to describe a whole week, and a reminder with no natural hour gets an empty list.
+**Most of a week should go unmentioned.** Every hour you leave out counts as 0.5 — no opinion, and no change to anything. One or two stretches is a normal answer and a reminder with no natural hour gets an empty list. You are not describing a week; you are naming the exceptions to it.
 
 - days is "mon", "mon-fri", "sat,sun", "weekends", or "all". Leaving it out means every day.
 - from and to are 24-hour times with any minutes you like: "10:00" to "13:00" says the middle of the morning to the middle of the day. A "to" at or before its "from" runs past midnight into the next day, so "22:00" to "02:00" is four hours of an evening.
-- v above 0.5 says this stretch is a better moment than usual; below says worse. 0 does not silence anything and 1 does not guarantee anything — they are the ends of a scale, not switches.
+- v is how much better or worse than usual this stretch is. 0.5 is no opinion, 0.7 is a good moment, 0.3 is a poor one. 0 and 1 are for hours you are certain about and should be rare. Nothing here silences a reminder or guarantees one — they are the ends of a scale, not switches.
 - Where two stretches overlap, the later one wins. Say the broad thing first and narrow it after.
 
-**Almost everything has some shape.** Washing up is worse at four in the morning. Anything needing a shop is worse when shops are shut. Anything involving another person is worse when that person is asleep. Anything that takes an hour of quiet is worse in the middle of a working day. Say that much at least.
+**A low number means "raising it then would be a waste", not "the thing cannot be done then".** A reminder is a prompt to think about something, not an order to do it that instant. Somebody reminded at lunchtime about an evening out can act on it — buy the tickets, tell the other person, decide not to go. Mark an hour down only when being reminded then would genuinely be no use: while they are asleep, or when it is too late for the reminder to change anything.
 
-Two or three stretches is a good answer. A dozen is describing precision you do not have — a person does not experience 14:30 differently from 15:00.
+**Almost everything has some shape.** Washing up is worse at four in the morning. Anything needing a shop is worse when shops are shut. Anything involving another person is worse when that person is asleep. Say that much at least.
 
-For example, for "wash dishes" from somebody who sleeps until noon and works weekdays:
+For "wash dishes", from somebody who works weekdays and stays up late:
 
-    [{"days": "all", "from": "02:00", "to": "13:00", "v": 0.05},
-     {"days": "mon-fri", "from": "13:00", "to": "19:00", "v": 0.3},
-     {"days": "all", "from": "20:00", "to": "01:00", "v": 0.9}]
+    [{"days": "all", "from": "20:00", "to": "01:00", "v": 0.8}]
 
-And for "buy stamps":
+One line, because there is one thing worth saying: after the evening meal is when it gets done. Every other hour is left alone rather than scored, including the ones they are asleep for — those are already handled elsewhere.
 
-    [{"days": "all", "from": "00:00", "to": "09:00", "v": 0.0},
-     {"days": "mon-fri", "from": "09:00", "to": "17:30", "v": 0.8},
-     {"days": "sat", "from": "09:00", "to": "13:00", "v": 0.6},
-     {"days": "all", "from": "17:30", "to": "24:00", "v": 0.0}]
+For "buy stamps", where the hours belong to the world rather than to the person:
+
+    [{"days": "mon-fri", "from": "09:00", "to": "17:00", "v": 0.8},
+     {"days": "all", "from": "01:00", "to": "07:00", "v": 0.1}]
+
+The second line is a real judgement: there is no use raising it at five in the morning. The evenings and the weekend are left at 0.5, because a reminder to buy stamps is still worth having then even though the shop is shut — it is something to plan, not only something to do.
 
 Reply with the JSON object only, with no prose and no markdown fences around it.`
 

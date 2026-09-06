@@ -249,10 +249,17 @@ fallback, it is the point: the row is recomputable, the account is already marke
 alternative is a reader guessing at a field that meant something else when it was written. The
 version is a column rather than a field inside the body so that reading it costs no parsing.
 
-The body holds `curve` — 48 numbers from 0 to 1, one per half hour of the person's local day —
-along with `exclusive` and `categories`, **neither of which anything reads**. They are kept
+The body holds `curve` — seven days of forty-eight numbers from 0 to 1, one per half hour of the
+person's local week — along with `exclusive` and `categories`, **neither of which anything
+reads**, and `shape` when the answer could not be read at all. The two unread fields are kept
 because asking again is the expensive part, at fifty questions a day on a free key, so
 discarding half an answer already paid for would be paid back one request per reminder.
+
+The grid is not what the companion is asked for. It answers with the stretches it has an
+opinion about — see [companion.md](companion.md#what-it-asks-for) — and those are expanded here,
+with everything unmentioned left at 0.5. Storing the expansion rather than the spans is
+deliberate: the weighting reads one half hour, tens of times a day, and should not re-derive a
+week to do it.
 
 Replaced **wholesale** for the whole set each time, not row by row: a reminder the companion was
 asked about and said nothing for has to lose what it was told last time, and a loop of upserts
@@ -265,7 +272,7 @@ than merely finished with.
 ### `advice_state`
 
 ```
-principal_id, stale, advised_at, attempted_at, error, limited
+principal_id, stale, advised_at, attempted_at, error, limited, alerted, version
 ```
 
 Whether a person's advice is worth what it says. A **flag rather than a timestamp comparison**:
@@ -287,9 +294,30 @@ prefix on the message, because the message is the gateway's own words and matchi
 breaks the first time OpenRouter rewords a sentence. The two are different states for whoever
 reads them: a rejected key wants somebody to fix it, and a quota wants nothing at all.
 
+`alerted` is whether the person has already been told, so a broken key is one notification per
+episode rather than one every half hour until they turn notifications off. Lowered by a round
+that works, so a key fixed and broken again months later is worth telling them about again.
+
 `advised_at` and `attempted_at` differ exactly when the last attempt failed, which is what lets
 the interface say "answered an hour ago, and the try since then failed" rather than picking one
 and being wrong half the time.
+
+### The version is what makes a shape change safe
+
+`advice_state.version` records which shape the last answer arrived under, and an account whose
+version is not the current one **reads as stale** whatever the flag says.
+
+That is the half of the versioning that is easy to leave out, and leaving it out is silent.
+Ignoring rows written under an older shape is obviously right — the reader would otherwise be
+guessing at a field that meant something else. But an account already advised keeps `stale = 0`,
+so it would never be asked again: its advice ignored, nothing fetching a replacement, and
+nothing anywhere saying so. The rows would simply stop counting.
+
+With the version here, changing [store.AdviceVersion] re-asks everybody by itself. **No
+migration, and no remembering to write one** — which matters because the shape has already
+changed three times, and each of those would otherwise have been a migration whose only job was
+one `UPDATE`. The default of `0` matches no real version, so the migration that added the column
+needed no statement either.
 
 ### `sessions`
 

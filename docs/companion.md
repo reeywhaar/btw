@@ -132,30 +132,63 @@ to it is a diff somebody can judge without running anything.
 
 ### What it asks for
 
-A **curve**: forty-eight numbers from 0 to 1, one for each half hour of the day, for each
-reminder. What that number does to the weighting is in
+A list of the **stretches of the week it has an opinion about**, each with a weight:
+
+```json
+[{"days": "all",     "from": "02:00", "to": "13:00", "v": 0.05},
+ {"days": "mon-fri", "from": "13:00", "to": "19:00", "v": 0.3},
+ {"days": "all",     "from": "20:00", "to": "01:00", "v": 0.9}]
+```
+
+Anything unmentioned is 0.5, which is a multiplier of exactly 1 — so one line is a complete
+answer and an empty list is a real one. What the weight does is in
 [nudges.md](nudges.md#the-companions-advice-is-the-last-term-and-only-a-multiplier).
 
-It replaced a list of weekly windows, and the reason is worth keeping. Windows made the model
-answer two questions at once — *when*, and *how strongly* — and it was bad at the second: every
-answer was in-or-out, so a reminder was either boosted hard or damped hard with nothing between.
-A number per half hour asks only the first question, and the strength falls out of it.
+This is the third shape the question has had, and the two it replaced were both wrong in ways
+worth writing down, because they are not obvious and they cost a day each to find.
 
-Four things in the question are load-bearing and have tests asserting they are still said.
+**Windows** — a list of hours with no weight — made the model answer two questions at once,
+*when* and *how strongly*, and it was bad at the second: every answer was in-or-out, so a
+reminder was boosted hard or damped hard with nothing between.
+
+**A number per half hour** — seven arrays of forty-eight — fixed that and broke something
+worse. Two things, in fact.
+
+*It cannot be counted.* Asked for 7×48, a free model sent 7×24, then an object keyed by day
+name, then 7×49 — three attempts, three shapes. There are no landmarks in a list of numbers, so
+a model that loses its place cannot notice and neither can the parser.
+
+*Saying nothing costs the same as saying something.* This is the one that actually decided it.
+With 336 numbers the considered answer and the lazy one are the same length, so a model under
+pressure writes `0.5` three hundred and thirty-six times and produces something data-shaped
+that says nothing at all. It did exactly that, for every reminder, and the screen drew it as a
+flat grey week. With spans an opinion is one line and no opinion is no lines.
+
+Spans have neither problem. Nothing is counted — a span names its own hours — and the format
+is sparse, so effort and length rise together.
+
+**Fixed buckets** would have solved the counting too, and are the obvious alternative. They
+were refused because their edges are somebody else's: "the middle of the morning to the middle
+of the day" is `10:00` to `13:00`, and no set of named buckets says that.
+
+Five things in the question are load-bearing and have tests asserting they are still said.
 
 **That the answer does not decide whether a reminder is shown.** Without that sentence a model
 reads the job as "when is this due", which is the one question btw exists to refuse.
 
-**That 0.5 means no opinion.** The middle of the scale has to be the default, or a model with
-nothing to say invents a shape rather than admitting it, and every reminder ends up with a
-strong opinion attached to it.
+**Say only what you have an opinion about.** The sparseness has to be stated or a model
+describes the whole week out of politeness, and the incentive that makes this format work is
+gone.
 
-**That a flat curve is a real answer rather than a failure.** The same thing said from the other
-side, and models need both.
+**That almost everything has some shape.** Washing up is worse at four in the morning; anything
+needing a shop is worse when shops are shut. Without this the empty list becomes the default
+rather than the exception.
 
-**Broad stretches, not spikes.** A person does not experience 14:30 differently from 15:00, and
-a curve swinging between neighbouring half hours is describing precision the model does not
-have.
+**That a later stretch wins where two overlap.** It is what lets a model say the broad thing
+and then narrow it, which is how anybody describes a week.
+
+**Two worked examples**, for "wash dishes" and "buy stamps". The single most effective thing in
+the prompt: it is the difference between a model knowing what an answer looks like and guessing.
 
 The categories are **glossed rather than listed**, and the glosses carry scheduling meaning a
 bare noun loses: *errands* is "bound by opening hours" and *chores* is "bound by nothing but
@@ -164,30 +197,45 @@ being awake", which is the whole reason they are two words.
 ### The answer is read leniently
 
 A `:free` model in JSON mode is a request, not a guarantee. The parser accepts a bare array as
-well as the `{"results": []}` wrapper, strips markdown fences, finds the object inside a
-sentence of preamble, reads `Monday` and `mon` alike, and takes `24:00` to mean midnight.
+well as the `{"results": []}` wrapper, strips markdown fences, and finds the object inside a
+sentence of preamble.
 
-One malformed field costs that field, and one malformed entry costs that entry. Both are
-decoded on their own: a typed struct fails the *whole document* over one bad value, so a round
-covering forty reminders would come back with nothing and look exactly like a model that had
-said nothing at all.
+One malformed field costs that field, one malformed span costs that span, and one malformed
+entry costs that entry. Each is decoded on its own: a typed struct fails the *whole document*
+over one bad value, so a round covering forty reminders would come back with nothing and look
+exactly like a model that had said nothing at all.
 
-**The curve is read out of whatever shape it arrives in**, so long as that shape means exactly
-one thing. A model asked for seven arrays of forty-eight reliably sends something else:
+Within a span, `days` reads `mon`, `Monday`, `mon-fri`, `sat,sun`, `weekends`, `all`, and
+wraps, so `fri-mon` is the stretch it names. Times read `9`, `09:00` and `24:00`. A `to` at or
+before its `from` runs past midnight. An absent `days` means every day, because a model writing
+one line about an evening means every evening and refusing it over a missing field would refuse
+the commonest answer.
+
+**The array shapes are still read**, because a model answers the question it expected at least
+as often as the one it was given:
 
 | what arrives | how it is read |
 | --- | --- |
-| 7×48 | as asked |
+| 7×48 | the week, half-hourly |
 | 336 flat | the same numbers in the same order |
 | 7×24 | the week by the hour; each value covers both of its half hours |
-| one day of 48 or 24 | that day, all week — which the prompt says is the right answer for a reminder that does not vary |
+| an object keyed by day name | Monday first, all seven or none |
+| one day of 48 or 24 | that day, all week |
+| a day one value out | trimmed or held at the end — see below |
 
-None of those invents a number. What is still refused is anything **ragged** — six days, or
-seven with one short — because there the values after the mistake belong to hours nobody can
-identify, and a curve confidently wrong about which hour is which is worse than no curve.
+None of those invents a number. The **one out** case is a tolerance rather than a repair, and
+it is allowed for a reason particular to this data: the question asks for broad stretches and
+says a curve swinging between neighbouring half hours is describing precision the model does
+not have. An answer whose neighbours are meant to be alike cannot be ruined by half an hour of
+misalignment. Two out is no longer a slip and is refused.
 
-A refused curve is logged by its shape, `7x24` or `336`, which says whether the prompt or the
-parser wants changing and says nothing about anybody's reminders.
+What is refused is anything **ragged** — six days, or seven with one short. There the values
+after the mistake belong to hours nobody can identify, and a curve confidently wrong about which
+hour is which is worse than no curve.
+
+A refused curve keeps the shape it arrived in, `7x24` or `obj:6`, which the screen shows and the
+log records. It says whether the prompt or the parser wants changing, and nothing about
+anybody's reminders.
 
 **An id that was not asked about is dropped.** It is the one mistake here that could reach
 another person's row, and a model that echoes an id back wrongly — or helpfully invents one —
@@ -237,21 +285,36 @@ settings, where it costs nobody anything.
 
 ### Seeing what it said
 
-*What it thinks* draws the open list with each reminder's week: one row per day, one cell per
-half hour, darker where the companion thinks it fits better.
+*What it thinks* draws the open list with each reminder's week: one row per day, one bar per
+half hour, tall where the companion thinks it fits better, against a dashed rule at 0.5.
 
 Drawn rather than listed, because 336 numbers per reminder is not something anybody reads. What
 somebody wants to know is the shape — whether the evenings are lifted, whether a weekend differs
-from a Tuesday, whether the model understood them at all — and a grid answers that at a glance
-where a column of decimals does not.
+from a Tuesday, whether the model understood them at all — and a week of bars answers that at a
+glance where a column of decimals does not. The exact number is on hovering a bar, since a
+height can be compared but not read.
 
-It shows **only what the weighting reads**. A reminder nothing has been said about says so, and
-an answer in a shape the program ignores says that too rather than being drawn as though it
-counted.
+Bars with gaps rather than one filled outline, because the answer *is* buckets: two neighbours
+agreeing is a fact worth seeing rather than a slab to smooth over. It is HTML rather than SVG
+for a duller reason — filling the available width means `preserveAspectRatio="none"`, which
+scales x and y by different factors and turns a one-pixel gap into a variable one and a rounded
+corner into an ellipse.
 
-*Ask again* marks the advice stale and wakes the loop, and answers before anything has happened
-— a model takes minutes and nothing on that screen waits for it. It cannot be used to burn a
-quota: a woken loop still declines to ask when nothing has changed since the last answer.
+It shows **only what the weighting reads**. A reminder nothing has been said about says so; an
+answer in a shape the program ignores says which shape it was; and a week that is flat all
+through says *no opinion* in words rather than drawing a uniform band that looks like data.
+
+*Ask again* asks the companion there and then and **waits for the answer**, which arrives as the
+redrawn week. It marks the advice stale first, because a look declines when nothing has changed
+— right for the loop, and wrong for a press that means "ask anyway".
+
+That press spends one of a small daily quota, so it has two ceilings: twenty seconds on the
+button, and four a minute at the server. The second is not redundant. A cooldown in one screen
+is not a ceiling on a screen that is not the one being used.
+
+It was 202-and-come-back-later first, which is right for a background job and wrong for a
+button: somebody who has just rewritten what they say about themselves presses this to see the
+difference, and being told to look again in a while makes them judge a change they cannot see.
 
 ## When it is asked
 
