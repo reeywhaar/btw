@@ -372,13 +372,21 @@ function RhythmPanel() {
           />
         </div>
 
-        {!r.window_enabled && (
-          // Said out loud, because unticking a box is not an obvious way to ask for a
-          // notification at four in the morning, and that is what it does.
+        {/* Three things to say and only one of them at a time. A window that ends before it
+            starts is the one somebody is most likely to think they have mistyped, so it says
+            back what it heard. */}
+        {!r.window_enabled || r.wake_minute === r.sleep_minute ? (
+          // Said out loud, because neither unticking a box nor setting both ends alike is an
+          // obvious way to ask for a notification at four in the morning, and both do.
           <Note>
             A nudge can arrive at any hour, including while you are asleep.
           </Note>
-        )}
+        ) : r.sleep_minute < r.wake_minute ? (
+          <Note>
+            Through midnight: {hhmm(r.wake_minute)} until {hhmm(r.sleep_minute)}{" "}
+            the next morning.
+          </Note>
+        ) : null}
       </Field>
 
       <Field
@@ -429,6 +437,11 @@ function RhythmPanel() {
   );
 }
 
+/** An hour of the day as somebody wrote it, from minutes since midnight. */
+function hhmm(minute: number): string {
+  return `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+}
+
 function Hour({
   value,
   onChange,
@@ -444,7 +457,10 @@ function Hour({
       disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
     >
-      {Array.from({ length: 25 }, (_, h) => (
+      {/* Twenty-four, not twenty-five. Midnight had both names before, and 24:00 as a start
+          is an hour no minute of the day is ever past — the window may now simply wrap, which
+          is what somebody choosing it actually meant. */}
+      {Array.from({ length: 24 }, (_, h) => (
         <option key={h} value={h * 60}>
           {String(h).padStart(2, "0")}:00
         </option>

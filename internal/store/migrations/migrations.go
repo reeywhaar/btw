@@ -82,6 +82,7 @@ var Main = []Migration{
 	mainRhythmDropMinGap,
 	mainCompanion,
 	mainProxy,
+	mainRhythmWrappingWindow,
 }
 
 // Derived owns what the running process accumulated: sessions, the nudge waiting to go out,

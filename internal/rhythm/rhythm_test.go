@@ -147,3 +147,82 @@ func TestAnUnknownZoneStillNudges(t *testing.T) {
 		t.Error("noon UTC counts as asleep under a zone that will not load")
 	}
 }
+
+// The case the old CHECK refused, and the reason it refused it: a waking day that spans two
+// local dates. Somebody awake from noon until four is awake at one in the morning.
+func TestAWakingWindowThatCrossesMidnight(t *testing.T) {
+	r := store.Rhythm{
+		Timezone: "UTC", WindowEnabled: true,
+		WakeMinute: 12 * 60, SleepMinute: 4 * 60, Budget: 4,
+	}
+	day := func(hour, minute int) time.Time {
+		return time.Date(2026, 9, 7, hour, minute, 0, 0, time.UTC)
+	}
+
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"the small hours", day(1, 0), true},
+		{"just before bed", day(3, 59), true},
+		{"asleep at four", day(4, 0), false},
+		{"asleep mid-morning", day(9, 0), false},
+		{"awake at noon", day(12, 0), true},
+		{"the evening", day(22, 0), true},
+		{"a minute to midnight", day(23, 59), true},
+	} {
+		if got := Awake(r, tc.at); got != tc.want {
+			t.Errorf("Awake(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// Sixteen hours, not minus eight — which is what decides how far apart nudges are.
+	if got, want := Interval(r), 4*time.Hour; got != want {
+		t.Errorf("Interval() = %v, want %v", got, want)
+	}
+}
+
+// What actually blocked this. Since read "the start of today's waking day" as today's waking
+// hour; at one in the morning, for somebody awake from noon, that hour is eleven hours away —
+// so every nudge looked scheduled for the future and the small hours went silent for exactly
+// the people who asked to be awake in them.
+func TestTheWakingDayBeganYesterdayInTheSmallHours(t *testing.T) {
+	r := store.Rhythm{
+		Timezone: "UTC", WindowEnabled: true,
+		WakeMinute: 12 * 60, SleepMinute: 4 * 60, Budget: 4,
+	}
+	now := time.Date(2026, 9, 7, 1, 0, 0, 0, time.UTC)
+
+	since := Since(r, time.Time{}, now)
+	if !since.Before(now) {
+		t.Errorf("Since() = %v, which is not before %v — a nudge would never come due", since, now)
+	}
+	// Yesterday's noon, less half an interval.
+	if want := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC).Add(-Interval(r) / 2); !since.Equal(want) {
+		t.Errorf("Since() = %v, want %v", since, want)
+	}
+
+	// And a nudge is actually owed, which is the whole point.
+	if !Due(r, since, now) {
+		t.Error("nothing is due at one in the morning for somebody who is awake then")
+	}
+}
+
+// Equal ends are the whole day: the natural thing to mean with two controls that each name an
+// hour, and the same as switching the window off.
+func TestEqualEndsAreTheWholeDay(t *testing.T) {
+	r := store.Rhythm{
+		Timezone: "UTC", WindowEnabled: true,
+		WakeMinute: 13 * 60, SleepMinute: 13 * 60, Budget: 4,
+	}
+	for hour := range 24 {
+		at := time.Date(2026, 9, 7, hour, 30, 0, 0, time.UTC)
+		if !Awake(r, at) {
+			t.Errorf("Awake(%02d:30) = false, want the whole day", hour)
+		}
+	}
+	if got, want := Interval(r), 6*time.Hour; got != want {
+		t.Errorf("Interval() = %v, want %v", got, want)
+	}
+}

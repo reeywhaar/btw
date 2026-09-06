@@ -1367,3 +1367,47 @@ func aWeek() store.Curve {
 	}
 	return c
 }
+
+// The refusal that used to stand — "for now the waking window has to start and end on the same
+// day" — is gone. Somebody awake from noon until four keeps the hours they actually keep.
+func TestAWakingWindowMaySpanMidnight(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+
+	resp := h.do("PATCH", "/api/rhythm", map[string]any{
+		"wake_minute": 12 * 60, "sleep_minute": 4 * 60,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH = %s, want the hours accepted", resp.Status)
+	}
+
+	rh, err := h.store.Rhythm(h.Context(), p.ID)
+	if err != nil {
+		t.Fatalf("Rhythm(): %v", err)
+	}
+	if rh.WakeMinute != 12*60 || rh.SleepMinute != 4*60 {
+		t.Errorf("hours = %d..%d, want them kept", rh.WakeMinute, rh.SleepMinute)
+	}
+	// Sixteen waking hours, not minus eight, which is what decides how far apart nudges land.
+	if rh.Window() != 16*60 {
+		t.Errorf("Window() = %d, want 960", rh.Window())
+	}
+}
+
+// An hour outside a day is still a mistake, which is the bound the old CHECK was really for.
+func TestAnHourOutsideADayIsStillRefused(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	for _, body := range []map[string]any{
+		{"wake_minute": -1},
+		{"sleep_minute": 25 * 60},
+	} {
+		resp := h.do("PATCH", "/api/rhythm", body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("PATCH %v = %s, want 400", body, resp.Status)
+		}
+	}
+}

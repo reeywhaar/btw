@@ -283,8 +283,8 @@ func TestTheWakingWindowIsOptionalAndItsHoursSurvive(t *testing.T) {
 	if got.WakeMinute != 8*60 || got.SleepMinute != 20*60 {
 		t.Errorf("hours = %d..%d, want them remembered", got.WakeMinute, got.SleepMinute)
 	}
-	if from, to := got.Bounds(); from != 0 || to != 24*60 {
-		t.Errorf("Bounds() = %d..%d, want the whole day", from, to)
+	if got.Window() != 24*60 {
+		t.Errorf("Window() = %d, want the whole day", got.Window())
 	}
 }
 
@@ -1113,5 +1113,71 @@ func TestAdviceFromAnOlderShapeIsReadAsNothing(t *testing.T) {
 	}
 	if got[0].Advised {
 		t.Error("advice written under an older shape was read as current")
+	}
+}
+
+// Somebody awake from noon until four is awake for sixteen hours, not minus eight — and the
+// two ends being equal is the natural way to say "all of it" with two controls that each name
+// an hour.
+func TestAWakingWindowMayCrossMidnight(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		wake, sleep int
+		want        int
+	}{
+		{"an ordinary day", 9 * 60, 22 * 60, 13 * 60},
+		{"noon until four", 12 * 60, 4 * 60, 16 * 60},
+		{"until midnight", 9 * 60, 24 * 60, 15 * 60},
+		{"midnight to midnight", 0, 24 * 60, 24 * 60},
+		{"both ends the same", 13 * 60, 13 * 60, 24 * 60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Rhythm{WindowEnabled: true, WakeMinute: tc.wake % (24 * 60), SleepMinute: tc.sleep % (24 * 60)}
+			if got := r.Window(); got != tc.want {
+				t.Errorf("Window() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Midnight has two names and they mean the same hour. Stored as 1440, "00:00 to 24:00" would
+// be a window of nothing and "24:00 to 09:00" a start no minute of the day is ever past.
+func TestMidnightIsStoredAsOneHourNotTwo(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	r, _ := s.Rhythm(ctx, p.ID)
+	r.WakeMinute = 0
+	r.SleepMinute = 24 * 60
+	if err := s.SetRhythm(ctx, r); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+
+	got, _ := s.Rhythm(ctx, p.ID)
+	if got.SleepMinute != 0 {
+		t.Errorf("sleep = %d, want midnight stored once", got.SleepMinute)
+	}
+	if got.Window() != 24*60 {
+		t.Errorf("Window() = %d, want the whole day", got.Window())
+	}
+}
+
+// The refusal that used to stand — "for now the waking window has to start and end on the same
+// day" — is gone, and a night owl's hours have to save.
+func TestANightOwlsHoursAreAccepted(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	r, _ := s.Rhythm(ctx, p.ID)
+	r.WakeMinute = 13 * 60
+	r.SleepMinute = 5 * 60
+	if err := s.SetRhythm(ctx, r); err != nil {
+		t.Fatalf("SetRhythm(): %v", err)
+	}
+	got, _ := s.Rhythm(ctx, p.ID)
+	if got.WakeMinute != 13*60 || got.SleepMinute != 5*60 {
+		t.Errorf("hours = %d..%d, want them kept", got.WakeMinute, got.SleepMinute)
 	}
 }

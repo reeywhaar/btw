@@ -101,6 +101,18 @@ for three delivered two.
 
 A nudge scheduled while awake that comes due after bedtime is dropped rather than sent late.
 
+#### The waking day may have begun yesterday
+
+Somebody awake from noon until four is, at one in the morning, in a day that started thirteen
+hours earlier. So "when did this waking day begin" is today's waking hour, or **yesterday's
+when today's has not arrived yet**.
+
+That one branch is the whole of what a window through midnight needed, and its absence is why
+the hours were refused outright until now. Reading the start as today's noon — still hours away
+— makes every nudge look scheduled for the future, so nothing is ever due: the small hours
+would go silent for exactly the people who asked to be awake in them, and the setting that
+caused it is the one they would least suspect.
+
 ## Which reminder it carries
 
 Decided at the instant of sending, never when the slot was drawn. Choosing at planning time

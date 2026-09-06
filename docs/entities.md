@@ -137,9 +137,13 @@ who never had an opinion.
 
 `timezone` is an IANA name. `wake_minute` and `sleep_minute` are minutes since local
 midnight. `budget` is not a count but an interval — the waking window divided by it — and
-`silent` asks for a notification without a sound. The window must lie inside one local day — night owls want `22:00`–`02:00` and
-cannot have it yet, because a window crossing midnight means slots belonging to two local
-dates.
+`silent` asks for a notification without a sound.
+
+**The window may cross midnight**, and `12:00`–`04:00` is sixteen waking hours rather than
+minus eight. Two ends that are equal mean the whole day, which is the natural thing to mean
+with two controls that each name an hour and the same as switching the window off. Both
+minutes are stored `0..1439` — midnight has two names and storing it as `1440` would make
+`00:00`–`24:00` a window of nothing.
 
 **`window_enabled` is off for somebody who wants nudges at any hour**, and it defaults on,
 because an account upgraded into this column should not start being woken at four in the
@@ -147,11 +151,10 @@ morning. The hours are kept either way rather than being folded into `0..1440`: 
 the box would otherwise lose whatever somebody chose, and typing `09:00` and `22:00` back in
 is exactly the bookkeeping this product is trying not to have.
 
-Everything that plans or validates goes through `Rhythm.Bounds()`, which answers the whole
-day when there is no window — so "no window" is one answer in one place rather than a
-condition every caller has to remember.
-
-short.
+Everything that plans goes through `Rhythm.Window()`, which answers how many minutes long the
+waking day is — the whole day when there is no window, and the wrapped length when there is
+one. So "no window" and "a window through midnight" are each one answer in one place rather
+than a condition every caller has to remember.
 
 ### `devices`
 

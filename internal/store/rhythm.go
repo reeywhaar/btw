@@ -49,22 +49,25 @@ type Rhythm struct {
 	Silent bool
 }
 
-// Bounds is the window a day is actually planned inside, in minutes since local midnight.
+// Window is how long the waking day is, in minutes.
 //
-// Everything that plans or validates goes through here rather than reading WakeMinute
-// directly, so "no window" is one answer in one place instead of a condition every caller
-// has to remember.
-func (r Rhythm) Bounds() (start, end int) {
+// Everything that plans goes through here rather than subtracting the hours itself, so "no
+// window" and "a window that crosses midnight" are each one answer in one place instead of a
+// condition every caller has to remember.
+//
+// A window may end at or before it starts, which means it runs into the next day: somebody
+// awake from noon until four is awake for sixteen hours, not minus eight. Equal ends mean the
+// whole day — the same thing as switching the window off, and the natural way to say so with
+// two controls that each name an hour.
+func (r Rhythm) Window() int {
 	if !r.WindowEnabled {
-		return 0, 24 * 60
+		return 24 * 60
 	}
-	return r.WakeMinute, r.SleepMinute
-}
-
-// Window is how long the window a day is planned inside is.
-func (r Rhythm) Window() time.Duration {
-	start, end := r.Bounds()
-	return time.Duration(end-start) * time.Minute
+	length := r.SleepMinute - r.WakeMinute
+	if length <= 0 {
+		length += 24 * 60
+	}
+	return length
 }
 
 // Rhythm reads one person's, or the defaults if they have never touched it.
@@ -104,21 +107,19 @@ func (s *Store) SetRhythm(ctx context.Context, r Rhythm) error {
 		return Invalid("%q is not a timezone", r.Timezone)
 	}
 	switch {
-	case r.WakeMinute < 0 || r.SleepMinute > 24*60:
+	case r.WakeMinute < 0 || r.WakeMinute > 24*60 || r.SleepMinute < 0 || r.SleepMinute > 24*60:
 		return Invalid("waking hours have to be inside a day")
-	case r.WakeMinute >= r.SleepMinute:
-		// Validated even when the window is switched off, because the hours are kept and
-		// have to still be a window when somebody switches it back on. A stored 22:00–09:00
-		// would be a save that fails much later, for a reason nobody would connect to this.
-		//
-		// Night owls want 22:00–02:00 and cannot have it yet: a window crossing midnight
-		// means a waking day spanning two local dates, which Since does not model.
-		return Invalid("for now the waking window has to start and end on the same day")
 	case r.Budget < 0:
 		return Invalid("a day cannot hold fewer than no nudges")
 	case r.Budget > MaxBudget:
 		return Invalid("%d a day is more than btw will send; %d is the most", r.Budget, MaxBudget)
 	}
+
+	// Midnight has two names and they mean the same hour. Storing 24:00 as 1440 would make
+	// "00:00 to 24:00" a window of zero rather than a whole day, and "24:00 to 09:00" a start
+	// no minute of the day is ever past.
+	r.WakeMinute %= 24 * 60
+	r.SleepMinute %= 24 * 60
 
 	_, err := s.main.ExecContext(ctx,
 		`INSERT INTO rhythm (principal_id, timezone, window_enabled, wake_minute, sleep_minute, budget, silent)

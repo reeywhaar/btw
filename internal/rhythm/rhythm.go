@@ -74,8 +74,18 @@ func Awake(r store.Rhythm, at time.Time) bool {
 	if !r.WindowEnabled {
 		return true
 	}
+	// Equal ends are the whole day, which is the natural way to say "no window" with two
+	// controls that each name an hour.
+	if r.WakeMinute == r.SleepMinute {
+		return true
+	}
 	_, minute := Local(r, at)
-	return minute >= r.WakeMinute && minute < r.SleepMinute
+	if r.WakeMinute < r.SleepMinute {
+		return minute >= r.WakeMinute && minute < r.SleepMinute
+	}
+	// A window that ends at or before it starts runs into the next day. Somebody awake from
+	// noon until four is awake at one in the morning and asleep at eleven.
+	return minute >= r.WakeMinute || minute < r.SleepMinute
 }
 
 // Interval is the average time between nudges: the waking day divided by the budget.
@@ -86,8 +96,7 @@ func Interval(r store.Rhythm) time.Duration {
 	if r.Budget <= 0 {
 		return 0
 	}
-	start, end := r.Bounds()
-	window := time.Duration(end-start) * time.Minute
+	window := time.Duration(r.Window()) * time.Minute
 	return max(window/time.Duration(r.Budget), Tick)
 }
 
@@ -140,11 +149,26 @@ func Since(r store.Rhythm, lastNudge, now time.Time) time.Time {
 	if !r.WindowEnabled {
 		return lastNudge
 	}
-	local := now.In(Location(r))
-	woke := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location()).
-		Add(time.Duration(r.WakeMinute) * time.Minute)
+	woke := woke(r, now)
 	if lastNudge.Before(woke) {
 		return woke.Add(-Interval(r) / 2)
 	}
 	return lastNudge
+}
+
+// woke is when the waking period containing `at` began.
+//
+// Today's waking hour, or yesterday's when today's has not arrived yet. That second case is
+// the whole of what a window crossing midnight needs: somebody awake from noon until four is,
+// at one in the morning, in a day that started eleven hours before at noon. Reading it as
+// today's noon — still hours away — would make every nudge look scheduled for the future, and
+// the small hours would go silent for exactly the people who asked to be awake in them.
+func woke(r store.Rhythm, at time.Time) time.Time {
+	local := at.In(Location(r))
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+	began := midnight.Add(time.Duration(r.WakeMinute) * time.Minute)
+	if began.After(local) {
+		began = began.AddDate(0, 0, -1)
+	}
+	return began
 }
