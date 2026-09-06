@@ -31,6 +31,12 @@
    * of a triangle. Nothing acts on it and nothing is coloured by it but an icon.
    * 4.80:1 on the light ground, 11.3:1 on the dark one. */
   --color-ok: #15803d;
+  /* The ground a chart is drawn on, and the only token here that names a surface rather than
+   * a role. A drawing needs its own edges: without them a shape sitting at the left of a row
+   * and one running off it look the same, and a flat day is indistinguishable from no day at
+   * all. Warm rather than grey so it reads as paper the chart sits on and not as a second
+   * panel, since the dialog under it is already white. */
+  --color-plot: #f5f1e7;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -45,6 +51,9 @@
     --color-accent: #f97362;
     --color-warn: #f59e0b;
     --color-ok: #4ade80;
+    /* Lifted off the surface rather than tinted. A beige on a dark ground reads as a stain;
+     * what the light one is doing — saying "the drawing is in here" — is a step up instead. */
+    --color-plot: #212126;
   }
 }
 

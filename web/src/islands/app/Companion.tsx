@@ -545,7 +545,7 @@ function Week({ curve }: { curve: number[][] }) {
           <svg
             viewBox={`0 0 ${day.length} ${chartHeight}`}
             preserveAspectRatio="none"
-            className="h-8 flex-1 overflow-visible"
+            className="h-8 flex-1 rounded-sm bg-plot"
             role="img"
             aria-label={`${dayNames[i]}, half-hourly`}
           >
