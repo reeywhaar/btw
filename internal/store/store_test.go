@@ -750,41 +750,84 @@ func TestNoCompanionIsNotAnError(t *testing.T) {
 	}
 }
 
-// The reason a slot is a window and not an hour: somebody who goes to bed at four wants
-// "22:00 to 02:00" to mean four hours, and the second two fall on the following day.
-func TestASlotThatRunsPastMidnightCoversBothDays(t *testing.T) {
-	// Saturday evening into Sunday morning.
-	night := Slot{Day: 5, Start: 22 * 60, End: 2 * 60}
-
-	for _, tc := range []struct {
-		name   string
-		day    int
-		minute int
-		want   bool
-	}{
-		{"saturday evening", 5, 23 * 60, true},
-		{"saturday at the start", 5, 22 * 60, true},
-		{"sunday small hours", 6, 60, true},
-		{"sunday at the end", 6, 2 * 60, false},
-		{"sunday morning", 6, 9 * 60, false},
-		{"saturday afternoon", 5, 15 * 60, false},
-		{"friday night", 4, 23 * 60, false},
-	} {
-		if got := night.Covers(tc.day, tc.minute); got != tc.want {
-			t.Errorf("Covers(%s) = %v, want %v", tc.name, got, tc.want)
+// Two indexes and no arithmetic beyond them: the day and the minute are worked out once, in
+// internal/rhythm, and this is where they land.
+func TestACurveIsReadByDayAndHalfHour(t *testing.T) {
+	c := make(Curve, Days)
+	for d := range c {
+		c[d] = make([]float64, Windows)
+		for i := range c[d] {
+			// Distinct per cell, so a test reading the wrong one cannot pass by luck.
+			c[d][i] = float64(d*Windows+i) / 1000
 		}
 	}
 
-	// Sunday is day 6, so its spill lands on Monday rather than on an eighth day.
-	sunday := Slot{Day: 6, Start: 23 * 60, End: 60}
-	if !sunday.Covers(0, 30) {
-		t.Error("a Sunday night slot does not reach into Monday")
+	for _, tc := range []struct {
+		name        string
+		day, minute int
+		want        float64
+	}{
+		{"monday midnight", 0, 0, 0},
+		{"monday's first half hour", 0, 29, 0},
+		{"monday's second", 0, 30, 0.001},
+		{"tuesday midnight", 1, 0, 0.048},
+		{"sunday noon", 6, 12 * 60, float64(6*Windows+24) / 1000},
+		{"the last half hour of the week", 6, 23*60 + 59, float64(6*Windows+47) / 1000},
+		{"a minute past a day wraps within it", 0, 24 * 60, 0},
+		{"before midnight is clamped", 0, -5, 0},
+	} {
+		got, ok := c.At(tc.day, tc.minute)
+		if !ok {
+			t.Fatalf("At(%s) said the curve was unreadable", tc.name)
+		}
+		if got != tc.want {
+			t.Errorf("At(%s) = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 
-	// An ordinary window is half-open: the end belongs to whatever comes next.
-	day := Slot{Day: 2, Start: 9 * 60, End: 17 * 60}
-	if !day.Covers(2, 9*60) || day.Covers(2, 17*60) || day.Covers(3, 10*60) {
-		t.Error("an ordinary window is not half-open on the day it names")
+	// A curve of the wrong shape is a model's answer that could not be understood, which is a
+	// different thing from one saying no hour suits — and the two want opposite treatment.
+	short := make(Curve, Days-1)
+	for d := range short {
+		short[d] = make([]float64, Windows)
+	}
+	if _, ok := short.At(0, 0); ok {
+		t.Error("a week of six days was read as an answer")
+	}
+	ragged := make(Curve, Days)
+	for d := range ragged {
+		ragged[d] = make([]float64, Windows)
+	}
+	ragged[3] = ragged[3][:10]
+	if _, ok := ragged.At(0, 0); ok {
+		t.Error("a week with a short day in it was read as an answer")
+	}
+	if _, ok := Curve(nil).At(0, 0); ok {
+		t.Error("a missing curve was read as an answer")
+	}
+}
+
+// A bump to the shape has to re-ask everybody by itself. Ignoring old rows is not enough: an
+// account already advised keeps stale = 0 and would sit with its advice ignored forever.
+func TestAnOlderShapeMakesAnAccountStaleWithoutAnythingSayingSo(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	if err := s.RecordAdvised(ctx, p.ID, s.Now()); err != nil {
+		t.Fatalf("RecordAdvised(): %v", err)
+	}
+	if state, _ := s.Advice(ctx, p.ID); state.Stale {
+		t.Fatal("stale straight after an answer arrived")
+	}
+
+	// What a bump to AdviceVersion looks like from here.
+	if _, err := s.derived.ExecContext(ctx,
+		`UPDATE advice_state SET version = ? WHERE principal_id = ?`, AdviceVersion-1, p.ID); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if state, _ := s.Advice(ctx, p.ID); !state.Stale {
+		t.Error("an answer from an older shape was treated as current")
 	}
 }
 
@@ -851,8 +894,8 @@ func TestAskingAgainReplacesTheWholeAnswerAndNotJustTheRowsMentioned(t *testing.
 	ids := []string{one.ID, two.ID}
 
 	first := map[string]Advice{
-		one.ID: {Slots: []Slot{{Day: 0, Start: 540, End: 600}}},
-		two.ID: {Exclusive: true, Slots: []Slot{{Day: 1, Start: 540, End: 600}}},
+		one.ID: {Curve: flat(0.9)},
+		two.ID: {Exclusive: true, Curve: flat(0.1)},
 	}
 	if err := s.SetAdvice(ctx, ids, first); err != nil {
 		t.Fatalf("SetAdvice(): %v", err)
@@ -860,20 +903,20 @@ func TestAskingAgainReplacesTheWholeAnswerAndNotJustTheRowsMentioned(t *testing.
 
 	// The second round says nothing about `two`.
 	if err := s.SetAdvice(ctx, ids, map[string]Advice{
-		one.ID: {Slots: []Slot{{Day: 3, Start: 1200, End: 1320}}},
+		one.ID: {Curve: flat(0.2)},
 	}); err != nil {
 		t.Fatalf("SetAdvice(): %v", err)
 	}
 
-	got, err := s.adviceFor(ctx, ids)
+	got, err := s.AdviceFor(ctx, ids)
 	if err != nil {
-		t.Fatalf("adviceFor(): %v", err)
+		t.Fatalf("AdviceFor(): %v", err)
 	}
 	if _, ok := got[two.ID]; ok {
 		t.Error("advice survived a round that did not mention its reminder")
 	}
-	if len(got[one.ID].Slots) != 1 || got[one.ID].Slots[0].Day != 3 {
-		t.Errorf("slots = %+v, want the second round's answer", got[one.ID].Slots)
+	if v, _ := got[one.ID].Curve.At(0, 0); v != 0.2 {
+		t.Errorf("curve = %v, want the second round's answer", v)
 	}
 }
 
@@ -897,7 +940,7 @@ func TestACandidateCarriesItsAdvice(t *testing.T) {
 		advised.ID: {
 			Exclusive:  true,
 			Categories: []string{"entertainment"},
-			Slots:      []Slot{{Day: 6, Start: 22 * 60, End: 2 * 60}},
+			Curve:      flat(0.8),
 		},
 	}); err != nil {
 		t.Fatalf("SetAdvice(): %v", err)
@@ -913,11 +956,11 @@ func TestACandidateCarriesItsAdvice(t *testing.T) {
 	for _, c := range got {
 		switch c.ID {
 		case advised.ID:
-			if !c.Advised || !c.Exclusive || len(c.Slots) != 1 {
+			if v, ok := c.Curve.At(0, 0); !c.Advised || !ok || v != 0.8 {
 				t.Errorf("advised candidate = %+v, want it to carry what was said", c)
 			}
 		case silent.ID:
-			if c.Advised || len(c.Slots) != 0 {
+			if c.Advised || c.Curve.Valid() {
 				t.Errorf("unadvised candidate = %+v, want nothing attached", c)
 			}
 		}
@@ -1029,5 +1072,46 @@ func TestSwitchingAProxyOffKeepsItsCredentialAndSavingSwitchesItOn(t *testing.T)
 	}
 	if got, _ = s.Proxy(ctx); got.Configured() {
 		t.Errorf("Proxy() = %+v, want nothing left", got)
+	}
+}
+
+// flat is a curve saying the same thing about every half hour of every day.
+func flat(v float64) Curve {
+	c := make(Curve, Days)
+	for d := range c {
+		c[d] = make([]float64, Windows)
+		for i := range c[d] {
+			c[d][i] = v
+		}
+	}
+	return c
+}
+
+// The version column is what lets the shape change without a migration: a row written under an
+// older idea of the answer is read as nothing rather than half-understood.
+func TestAdviceFromAnOlderShapeIsReadAsNothing(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	rem, err := s.CreateReminder(ctx, p.ID, "water the plants")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	if _, err := s.derived.ExecContext(ctx,
+		`INSERT INTO advice (reminder_id, version, body, advised_at) VALUES (?, ?, ?, ?)`,
+		rem.ID, AdviceVersion-1, `{"curve":[[0.9]]}`, unix(s.Now())); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	got, err := s.Candidates(ctx, p.ID, s.Now(), IgnoreFloor)
+	if err != nil {
+		t.Fatalf("Candidates(): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Candidates() = %d, want the reminder still there", len(got))
+	}
+	if got[0].Advised {
+		t.Error("advice written under an older shape was read as current")
 	}
 }

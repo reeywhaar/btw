@@ -9,4 +9,5 @@ export const qk = {
   relay: ["relay"] as const,
   proxy: ["proxy"] as const,
   companion: ["companion"] as const,
+  advice: ["advice"] as const,
 };

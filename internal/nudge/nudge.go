@@ -176,8 +176,8 @@ func (s *Scheduler) deliver(ctx context.Context, principalID string, floor store
 		return NothingToSend, 0, err
 	}
 
-	// Read before the choice as well as after it: the companion's slots are in this person's
-	// local week, and turning an instant into that is the one thing only a rhythm can do.
+	// Read before the choice as well as after it: the companion's curve is against this
+	// person's own week, and turning an instant into that is the one thing only a rhythm can do.
 	rh, err := s.store.Rhythm(ctx, principalID)
 	if err != nil {
 		return NothingToSend, 0, err

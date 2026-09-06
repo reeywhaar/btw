@@ -130,16 +130,32 @@ product here: what the model is told is the whole of what distinguishes good adv
 guess, so it is written as prose in one block that reads as what the model reads, and a change
 to it is a diff somebody can judge without running anything.
 
-Three things in it are load-bearing and have tests asserting they are still said.
+### What it asks for
+
+A **curve**: forty-eight numbers from 0 to 1, one for each half hour of the day, for each
+reminder. What that number does to the weighting is in
+[nudges.md](nudges.md#the-companions-advice-is-the-last-term-and-only-a-multiplier).
+
+It replaced a list of weekly windows, and the reason is worth keeping. Windows made the model
+answer two questions at once — *when*, and *how strongly* — and it was bad at the second: every
+answer was in-or-out, so a reminder was either boosted hard or damped hard with nothing between.
+A number per half hour asks only the first question, and the strength falls out of it.
+
+Four things in the question are load-bearing and have tests asserting they are still said.
 
 **That the answer does not decide whether a reminder is shown.** Without that sentence a model
 reads the job as "when is this due", which is the one question btw exists to refuse.
 
-**That naming no slots is a real answer.** Otherwise a model with no opinion invents one rather
-than admitting it, and an invented window is worse than none.
+**That 0.5 means no opinion.** The middle of the scale has to be the default, or a model with
+nothing to say invents a shape rather than admitting it, and every reminder ends up with a
+strong opinion attached to it.
 
-**Be generous with the slots.** The first version answered two or three windows for something
-somebody wanted daily, because nothing told it how many to give.
+**That a flat curve is a real answer rather than a failure.** The same thing said from the other
+side, and models need both.
+
+**Broad stretches, not spikes.** A person does not experience 14:30 differently from 15:00, and
+a curve swinging between neighbouring half hours is describing precision the model does not
+have.
 
 The categories are **glossed rather than listed**, and the glosses carry scheduling meaning a
 bare noun loses: *errands* is "bound by opening hours" and *chores* is "bound by nothing but
@@ -151,9 +167,27 @@ A `:free` model in JSON mode is a request, not a guarantee. The parser accepts a
 well as the `{"results": []}` wrapper, strips markdown fences, finds the object inside a
 sentence of preamble, reads `Monday` and `mon` alike, and takes `24:00` to mean midnight.
 
-One malformed slot costs that slot and not the answer. Refusing the whole reply over one
-unreadable window would throw away nineteen good ones and leave the account no better off than
-before it configured a key.
+One malformed field costs that field, and one malformed entry costs that entry. Both are
+decoded on their own: a typed struct fails the *whole document* over one bad value, so a round
+covering forty reminders would come back with nothing and look exactly like a model that had
+said nothing at all.
+
+**The curve is read out of whatever shape it arrives in**, so long as that shape means exactly
+one thing. A model asked for seven arrays of forty-eight reliably sends something else:
+
+| what arrives | how it is read |
+| --- | --- |
+| 7×48 | as asked |
+| 336 flat | the same numbers in the same order |
+| 7×24 | the week by the hour; each value covers both of its half hours |
+| one day of 48 or 24 | that day, all week — which the prompt says is the right answer for a reminder that does not vary |
+
+None of those invents a number. What is still refused is anything **ragged** — six days, or
+seven with one short — because there the values after the mistake belong to hours nobody can
+identify, and a curve confidently wrong about which hour is which is worse than no curve.
+
+A refused curve is logged by its shape, `7x24` or `336`, which says whether the prompt or the
+parser wants changing and says nothing about anybody's reminders.
 
 **An id that was not asked about is dropped.** It is the one mistake here that could reach
 another person's row, and a model that echoes an id back wrongly — or helpfully invents one —
@@ -200,6 +234,24 @@ means it is held rather than dropped: it goes out on the first pass after they w
 **A quota is not pushed at all.** It resolves itself, nothing somebody could do would help, and
 a notification saying so is one that trains them to ignore the next one. `limited` stays in
 settings, where it costs nobody anything.
+
+### Seeing what it said
+
+*What it thinks* draws the open list with each reminder's week: one row per day, one cell per
+half hour, darker where the companion thinks it fits better.
+
+Drawn rather than listed, because 336 numbers per reminder is not something anybody reads. What
+somebody wants to know is the shape — whether the evenings are lifted, whether a weekend differs
+from a Tuesday, whether the model understood them at all — and a grid answers that at a glance
+where a column of decimals does not.
+
+It shows **only what the weighting reads**. A reminder nothing has been said about says so, and
+an answer in a shape the program ignores says that too rather than being drawn as though it
+counted.
+
+*Ask again* marks the advice stale and wakes the loop, and answers before anything has happened
+— a model takes minutes and nothing on that screen waits for it. It cannot be used to burn a
+quota: a woken loop still declines to ask when nothing has changed since the last answer.
 
 ## When it is asked
 
@@ -250,5 +302,6 @@ chose. That is defensible while it is only a weighting — btw deliberately show
 but a wrong answer is still something somebody can feel more easily than see, and the remedy is
 rewriting `about` and waiting.
 
-**Nothing verifies the advice was any good.** A model that places everything at three in the
-morning and a model that understands somebody's week produce the same log line.
+**Nothing verifies the advice was any good.** *What it thinks* draws the week so somebody can
+see whether a model understood them, but nothing checks it, and a curve that is confidently
+wrong looks exactly like one that is right.

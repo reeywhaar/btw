@@ -42,6 +42,16 @@ type Scheduler interface {
 	NudgeNow(ctx context.Context, principalID string) (outcome string, delivered int, err error)
 }
 
+// Adviser is the loop that asks somebody's companion what it makes of their reminders.
+//
+// One method, and it waits: somebody who has just rewritten what they say about themselves
+// wants to see the difference, not a note telling them to look again later. An interface for
+// the same reason [Scheduler] is one — so internal/api does not import the package that
+// imports it.
+type Adviser interface {
+	Look(ctx context.Context, principalID string) error
+}
+
 // Server holds what every handler needs.
 type Server struct {
 	cfg    *config.Config
@@ -49,6 +59,7 @@ type Server struct {
 	log    *slog.Logger
 	push   *webpush.Sender
 	nudger Scheduler
+	advise Adviser
 	spa    *SPA
 
 	// Per-server rather than package-level. Two instances in one process — which is what
@@ -57,18 +68,24 @@ type Server struct {
 	loginPerUser  *limiter
 	passwordLimit *limiter
 	nudgeNowLimit *limiter
+	adviceLimit   *limiter
 }
 
 // New builds the handler tree.
-func New(cfg *config.Config, st *store.Store, log *slog.Logger, push *webpush.Sender, nudger Scheduler, spa *SPA) *Server {
+func New(cfg *config.Config, st *store.Store, log *slog.Logger, push *webpush.Sender, nudger Scheduler, advise Adviser, spa *SPA) *Server {
 	return &Server{
-		cfg: cfg, store: st, log: log, push: push, nudger: nudger, spa: spa,
+		cfg: cfg, store: st, log: log, push: push, nudger: nudger, advise: advise, spa: spa,
 		loginGlobal:   newLimiter(60, time.Minute),
 		loginPerUser:  newLimiter(5, time.Minute),
 		passwordLimit: newLimiter(5, time.Minute),
 		// The test button makes an outbound request on the caller's behalf, and an
 		// endpoint that does that needs a ceiling.
 		nudgeNowLimit: newLimiter(6, time.Minute),
+		// Asking again makes an outbound request on the caller's behalf and spends a quota
+		// with fifty a day in it, which is the same argument the button above makes and a
+		// stronger one. The screen holds a press for twenty seconds; this is the floor under
+		// a screen that is not the one being used.
+		adviceLimit: newLimiter(4, time.Minute),
 	}
 }
 
@@ -112,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/companion", s.requireSession(s.putCompanion))
 	mux.Handle("DELETE /api/companion", s.requireSession(s.deleteCompanion))
 	mux.Handle("POST /api/companion/test", s.requireSession(s.testCompanion))
+	mux.Handle("GET /api/companion/advice", s.requireSession(s.listAdvice))
+	mux.Handle("POST /api/companion/advice/refresh", s.requireSession(s.refreshAdvice))
 
 	mux.Handle("GET /api/rhythm", s.requireSession(s.getRhythm))
 	mux.Handle("PATCH /api/rhythm", s.requireSession(s.patchRhythm))

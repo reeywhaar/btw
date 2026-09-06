@@ -4,9 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteCompanion,
   getCompanion,
+  getCompanionAdvice,
+  postCompanionAdviceRefresh,
   postCompanionTest,
   putCompanion,
   type Advice,
+  type AdvisedReminder,
   type Companion as CompanionType,
   type CompanionEdit,
 } from "@app/api/actions/companion";
@@ -34,6 +37,7 @@ export function Companion() {
   const client = useQueryClient();
   const companion = useQuery({ queryKey: qk.companion, queryFn: getCompanion });
   const [editing, setEditing] = useState(false);
+  const [showing, setShowing] = useState(false);
 
   if (!companion.isSuccess) return null;
   const c = companion.data;
@@ -73,6 +77,11 @@ export function Companion() {
               {c.configured ? "Change" : "Add a key"}
             </Button>
             {c.configured && (
+              <Button variant="quiet" onClick={() => setShowing(true)}>
+                What it thinks
+              </Button>
+            )}
+            {c.configured && (
               <Button
                 variant="link"
                 onClick={async () => {
@@ -95,6 +104,13 @@ export function Companion() {
           setEditing(false);
           void client.invalidateQueries({ queryKey: qk.companion });
         }}
+      />
+      <AdviceDialog
+        open={showing}
+        onClose={() => setShowing(false)}
+        onRefreshed={() =>
+          void client.invalidateQueries({ queryKey: qk.companion })
+        }
       />
     </>
   );
@@ -329,4 +345,277 @@ function CompanionDialog({
       )}
     </Dialog>
   );
+}
+
+const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** The clock time a half-hour window begins at. */
+function clockAt(window: number): string {
+  const minutes = window * 30;
+  const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const mm = String(minutes % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/** Whether every half hour of the week scored the same, which is an answer saying nothing. */
+function isFlat(curve: number[][]): boolean {
+  const first = curve[0]?.[0];
+  if (first === undefined) return true;
+  return curve.every((day) => day.every((v) => v === first));
+}
+
+/**
+ * What the companion currently thinks, drawn rather than listed.
+ *
+ * Seven days of forty-eight numbers is 336 per reminder, and a list of 336 numbers is not
+ * something anybody reads — it is something they scroll past. What somebody wants to know is
+ * the *shape*: whether the evenings are lifted, whether the weekend differs from a Tuesday,
+ * whether the model understood them at all. A week drawn as a grid answers that at a glance.
+ */
+function AdviceDialog({
+  open,
+  onClose,
+  onRefreshed,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onRefreshed: () => void;
+}) {
+  const client = useQueryClient();
+
+  // When the last press finished, or 0. A press spends one of a small daily quota, so the
+  // button holds for a moment afterwards — long enough that leaning on it is not a way to
+  // burn a day's worth, short enough not to be in the way of somebody iterating on what they
+  // wrote about themselves.
+  const [restingSince, setRestingSince] = useState(0);
+  const [resting, setResting] = useState(false);
+
+  useEffect(() => {
+    if (restingSince === 0) return;
+    setResting(true);
+    const id = setTimeout(() => setResting(false), restBetweenAsks);
+    return () => clearTimeout(id);
+  }, [restingSince]);
+
+  const advice = useQuery({
+    queryKey: qk.advice,
+    queryFn: getCompanionAdvice,
+    // Only while somebody is looking. This is a diagnostic, not part of the page.
+    enabled: open,
+  });
+
+  const refresh = useMutation({
+    mutationFn: postCompanionAdviceRefresh,
+    onSuccess: (fresh) => {
+      // Written straight into the cache rather than refetched: the reply *is* the answer, and
+      // asking again for what was just returned is a round trip for nothing.
+      client.setQueryData(qk.advice, fresh);
+      setRestingSince(Date.now());
+      onRefreshed();
+    },
+  });
+
+  const failed = advice.data?.error ?? "";
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="What it thinks"
+      footer={
+        <>
+          <Button variant="link" onClick={onClose}>
+            Close
+          </Button>
+          <Button
+            disabled={refresh.isPending || resting}
+            onClick={() => refresh.mutate()}
+          >
+            {refresh.isPending
+              ? "asking…"
+              : resting
+                ? "just asked"
+                : "Ask again"}
+          </Button>
+        </>
+      }
+    >
+      {refresh.isPending && (
+        // Said while it happens rather than after: a model takes anywhere from seconds to a
+        // couple of minutes, and a button that went quiet for that long reads as broken.
+        <Note>
+          Asking your companion. This takes a moment — the drawings below change
+          when it answers.
+        </Note>
+      )}
+      {failed !== "" && !refresh.isPending && (
+        <p className="text-sm break-words text-accent">{failed}</p>
+      )}
+      {refresh.error && (
+        <p className="text-sm break-words text-accent">
+          {refresh.error.message}
+        </p>
+      )}
+
+      {advice.isSuccess && advice.data.reminders.length === 0 && (
+        <Note>
+          Nothing written down yet, so there is nothing to think about.
+        </Note>
+      )}
+      {advice.isSuccess &&
+        advice.data.reminders.map((r) => <AdviceRow key={r.id} reminder={r} />)}
+      {advice.error && (
+        <p className="text-sm text-accent">{advice.error.message}</p>
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * How long the button rests after a press.
+ *
+ * A press spends one of a small daily quota. The server has its own ceiling — this is the one
+ * that stops somebody reaching it by accident, on the screen where reaching it is easiest.
+ */
+const restBetweenAsks = 20 * 1000;
+
+function AdviceRow({ reminder }: { reminder: AdvisedReminder }) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-line pt-4 first:border-0 first:pt-0">
+      <span className="text-sm text-fg">{reminder.text}</span>
+
+      {!reminder.advised && (
+        <span className="text-xs text-faint">Nothing said about this yet.</span>
+      )}
+
+      {reminder.categories && reminder.categories.length > 0 && (
+        <span className="text-xs text-faint">
+          {reminder.categories.join(", ")}
+          {reminder.exclusive ? " · wants full attention" : ""}
+        </span>
+      )}
+
+      {reminder.curve && isFlat(reminder.curve) && (
+        // A flat curve is data-shaped and says nothing. Drawn, it is a uniform grey band that
+        // looks exactly like an answer, so it is worth saying out loud that it is not one.
+        <span className="text-xs text-faint">
+          No opinion about when — every hour scored the same.
+        </span>
+      )}
+      {reminder.curve && !isFlat(reminder.curve) && (
+        <Week curve={reminder.curve} />
+      )}
+
+      {reminder.advised && !reminder.curve && (
+        <span className="text-xs text-faint">
+          It answered, but not in a shape that could be read
+          {reminder.shape ? ` — it sent ${reminder.shape}` : ""}.
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** How tall one day's chart is in its own coordinates. Arbitrary — only the ratios matter. */
+const chartHeight = 10;
+
+/**
+ * A week, one line per day, with the rules that make a level readable.
+ *
+ * Shading was the first version of this and could not answer the only question somebody asks of
+ * it: whether a flat week is 0.5 or 1. A shade can be compared with the shade beside it and not
+ * read on its own, and no legend fixes that — it makes somebody look away from the drawing to
+ * decode it.
+ *
+ * A line against a rule at 0.5 is read without looking away. Above the dashes is better than
+ * usual, below is worse, and the top of the row is 1.
+ *
+ * Stepped rather than smoothed, because the answer *is* steps: a value covers its half hour and
+ * says nothing about the moment between one and the next. A curve drawn through the points
+ * would be drawing an opinion the model never gave.
+ */
+function Week({ curve }: { curve: number[][] }) {
+  return (
+    <div className="flex flex-col gap-1 text-fg">
+      {curve.map((day, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="w-7 shrink-0 text-[10px] text-faint">
+            {dayNames[i]}
+          </span>
+          <svg
+            viewBox={`0 0 ${day.length} ${chartHeight}`}
+            preserveAspectRatio="none"
+            className="h-8 flex-1 overflow-visible"
+            role="img"
+            aria-label={`${dayNames[i]}, half-hourly`}
+          >
+            {/* Six-hourly, so a shape can be placed against a time without counting cells. */}
+            {[12, 24, 36].map((x) => (
+              <line
+                key={x}
+                x1={x}
+                x2={x}
+                y1={0}
+                y2={chartHeight}
+                stroke="currentColor"
+                strokeOpacity={0.12}
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            {/* The rule everything is read against: above it is better than usual. */}
+            <line
+              x1={0}
+              x2={day.length}
+              y1={chartHeight / 2}
+              y2={chartHeight / 2}
+              stroke="currentColor"
+              strokeOpacity={0.35}
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* Filled and not outlined. An outline drew a heavy black rule along the bottom of
+                every row — the baseline at zero, which carries no information — and turned a
+                shape somebody reads at a glance into a diagram of itself. */}
+            <path d={area(day)} fill="currentColor" fillOpacity={0.5} />
+            {/* Invisible, and the only way to read an exact number off a drawing. */}
+            {day.map((v, x) => (
+              <rect
+                key={x}
+                x={x}
+                y={0}
+                width={1}
+                height={chartHeight}
+                fill="transparent"
+              >
+                <title>{`${dayNames[i]} ${clockAt(x)} · ${v.toFixed(1)}`}</title>
+              </rect>
+            ))}
+          </svg>
+        </div>
+      ))}
+      <div className="flex pl-9 text-[10px] text-faint">
+        <span className="flex-1 text-left">00:00</span>
+        <span className="flex-1 text-center">12:00</span>
+        <span className="flex-1 text-right">24:00</span>
+      </div>
+    </div>
+  );
+}
+
+/** The stepped top edge of one day: a value holds for its whole half hour. */
+function steps(day: number[]): string {
+  const y = (v: number) =>
+    chartHeight - Math.min(Math.max(v, 0), 1) * chartHeight;
+  const parts = day.flatMap((v, i) => [
+    `${i === 0 ? "M" : "L"}${i},${y(v)}`,
+    `L${i + 1},${y(v)}`,
+  ]);
+  return parts.join(" ");
+}
+
+/** That edge, closed down to the baseline so it is a shape rather than a line. */
+function area(day: number[]): string {
+  return `${steps(day)} L${day.length},${chartHeight} L0,${chartHeight} Z`;
 }

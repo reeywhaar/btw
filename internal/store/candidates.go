@@ -26,12 +26,11 @@ type Candidate struct {
 	// on, the second must leave the weight exactly as it was.
 	Advised bool
 
-	// Exclusive is whether the companion thinks this wants somebody's full attention.
-	Exclusive bool
-
-	// Slots are when it thinks the reminder would land well, in minutes since local midnight
-	// against the person's own zone. Compared, never converted — see [Slot].
-	Slots []Slot
+	// Curve is how well each half hour of the person's week suits this reminder, from 0 to 1.
+	//
+	// Read against their own local clock. Nothing here converts anything: the day and the
+	// minute are worked out once, in internal/rhythm, and this is two indexes.
+	Curve Curve
 }
 
 // Floor says whether a reminder's own minimum interval applies to this draw.
@@ -109,15 +108,14 @@ func (s *Store) Candidates(ctx context.Context, principalID string, now time.Tim
 	for i, c := range out {
 		ids[i] = c.ID
 	}
-	advice, err := s.adviceFor(ctx, ids)
+	advice, err := s.AdviceFor(ctx, ids)
 	if err != nil {
 		return out, nil
 	}
 	for i := range out {
 		if a, ok := advice[out[i].ID]; ok {
 			out[i].Advised = true
-			out[i].Exclusive = a.Exclusive
-			out[i].Slots = a.Slots
+			out[i].Curve = a.Curve
 		}
 	}
 	return out, nil

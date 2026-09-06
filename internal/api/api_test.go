@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,18 @@ import (
 	"btw/internal/store"
 	"btw/internal/webpush"
 )
+
+// fakeAdviser records what was asked about, so the button can be tested without a model on the
+// other end.
+type fakeAdviser struct {
+	refreshed []string
+	err       error
+}
+
+func (f *fakeAdviser) Look(_ context.Context, principalID string) error {
+	f.refreshed = append(f.refreshed, principalID)
+	return f.err
+}
 
 // fakeNudger stands in for the scheduler, so the button can be tested without a push
 // service on the other end.
@@ -37,10 +50,11 @@ func (f *fakeNudger) NudgeNow(context.Context, string) (string, int, error) {
 
 type harness struct {
 	*testing.T
-	srv    *httptest.Server
-	store  *store.Store
-	nudger *fakeNudger
-	cookie string
+	srv     *httptest.Server
+	store   *store.Store
+	nudger  *fakeNudger
+	adviser *fakeAdviser
+	cookie  string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -71,9 +85,9 @@ func newHarness(t *testing.T) *harness {
 		t.Fatalf("NewSPA(): %v", err)
 	}
 
-	h := &harness{T: t, store: st, nudger: &fakeNudger{}}
+	h := &harness{T: t, store: st, nudger: &fakeNudger{}, adviser: &fakeAdviser{}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	server := New(cfg, st, log, webpush.NewSender(key, pub, "https://btw.example.com"), h.nudger, spa)
+	server := New(cfg, st, log, webpush.NewSender(key, pub, "https://btw.example.com"), h.nudger, h.adviser, spa)
 	h.srv = httptest.NewServer(server.Handler())
 	t.Cleanup(h.srv.Close)
 	return h
@@ -998,7 +1012,7 @@ func TestTheCompanionSaysHowTheLastRoundWent(t *testing.T) {
 
 	now := h.store.Now()
 	h.store.SetAdvice(h.Context(), []string{rem.ID, other.ID}, map[string]store.Advice{
-		rem.ID: {Slots: []store.Slot{{Day: 0, Start: 540, End: 600}}},
+		rem.ID: {Curve: aWeek()},
 	})
 	h.store.RecordAdvised(h.Context(), p.ID, now)
 
@@ -1007,8 +1021,8 @@ func TestTheCompanionSaysHowTheLastRoundWent(t *testing.T) {
 	}
 
 	h.store.SetAdvice(h.Context(), []string{rem.ID, other.ID}, map[string]store.Advice{
-		rem.ID:   {Slots: []store.Slot{}},
-		other.ID: {Slots: []store.Slot{}},
+		rem.ID:   {Curve: aWeek()},
+		other.ID: {Curve: aWeek()},
 	})
 	if got := read()["status"]; got != "all" {
 		t.Errorf("status = %v, want all when both were answered for", got)
@@ -1158,4 +1172,198 @@ func TestTestingAProxyBeforeSavingOneIsRefused(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %s, want 400", resp.Status)
 	}
+}
+
+// The screen shows what the weighting reads, and nothing else — an answer the program would
+// ignore is not something to draw.
+func TestTheAdviceScreenShowsWhatTheWeightingReads(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "k"}).Body.Close()
+
+	advised, err := h.store.CreateReminder(h.Context(), p.ID, "watch rick and morty")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+	silent, err := h.store.CreateReminder(h.Context(), p.ID, "nothing said about this")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	week := make(store.Curve, store.Days)
+	for d := range week {
+		week[d] = make([]float64, store.Windows)
+	}
+	week[5][42] = 0.9
+	h.store.SetAdvice(h.Context(), []string{advised.ID}, map[string]store.Advice{
+		advised.ID: {Categories: []string{"entertainment"}, Curve: week},
+	})
+
+	resp := h.do("GET", "/api/companion/advice", nil)
+	defer resp.Body.Close()
+	var got struct {
+		Reminders []struct {
+			ID      string      `json:"id"`
+			Text    string      `json:"text"`
+			Advised bool        `json:"advised"`
+			Curve   [][]float64 `json:"curve"`
+		} `json:"reminders"`
+		Days    int `json:"days"`
+		Windows int `json:"windows"`
+	}
+	decodeBody(t, resp, &got)
+
+	if got.Days != store.Days || got.Windows != store.Windows {
+		t.Errorf("shape = %dx%d, want %dx%d", got.Days, got.Windows, store.Days, store.Windows)
+	}
+	if len(got.Reminders) != 2 {
+		t.Fatalf("reminders = %d, want both", len(got.Reminders))
+	}
+	for _, r := range got.Reminders {
+		switch r.ID {
+		case advised.ID:
+			if !r.Advised || len(r.Curve) != store.Days || len(r.Curve[5]) != store.Windows {
+				t.Errorf("advised = %+v, want the whole week", r.Advised)
+			}
+			if r.Curve[5][42] != 0.9 {
+				t.Errorf("curve = %v, want the value it was given", r.Curve[5][42])
+			}
+		case silent.ID:
+			if r.Advised || r.Curve != nil {
+				t.Error("a reminder nothing was said about came back with a curve")
+			}
+		}
+	}
+}
+
+// The press waits and comes back with the answer. It used to hand the work to the loop and
+// return before anything had happened, which made somebody judge a change they could not see.
+func TestAskingAgainWaitsAndAnswersWithTheAdvice(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	if _, err := h.store.CreateReminder(h.Context(), p.ID, "wash dishes"); err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	resp := h.do("POST", "/api/companion/advice/refresh", map[string]any{})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %s, want 200 with the answer", resp.Status)
+	}
+	var got struct {
+		Reminders []struct {
+			Text string `json:"text"`
+		} `json:"reminders"`
+	}
+	decodeBody(t, resp, &got)
+	if len(got.Reminders) != 1 || got.Reminders[0].Text != "wash dishes" {
+		t.Errorf("reminders = %+v, want the advice as it now stands", got.Reminders)
+	}
+
+	if len(h.adviser.refreshed) != 1 || h.adviser.refreshed[0] != p.ID {
+		t.Errorf("asked about %v, want this account", h.adviser.refreshed)
+	}
+	// Marked stale first, because a look declines when nothing has changed — right for the
+	// loop, and wrong for a press that means "ask anyway".
+	if state, _ := h.store.Advice(h.Context(), p.ID); !state.Stale {
+		t.Error("the press did not force a fresh look")
+	}
+}
+
+// It makes an outbound request on the caller's behalf against a quota with fifty a day in it,
+// and the screen's own twenty seconds is not a ceiling — it is only the screen being used.
+func TestAskingAgainHasACeiling(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+
+	var limited bool
+	for range 8 {
+		resp := h.do("POST", "/api/companion/advice/refresh", map[string]any{})
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Error("asking again can be pressed without limit")
+	}
+}
+
+// What went wrong reaches the screen, rather than a silent nothing after a long wait.
+func TestAFailedAskSaysWhyRatherThanAnsweringEmpty(t *testing.T) {
+	h := newHarness(t)
+	h.signIn()
+	h.adviser.err = errors.New("the key was rejected")
+
+	resp := h.do("POST", "/api/companion/advice/refresh", map[string]any{})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status = %s, want 502", resp.Status)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	decodeBody(t, resp, &body)
+	if body.Error != "the key was rejected" {
+		t.Errorf("error = %q, want the reason", body.Error)
+	}
+}
+
+// The settings block said "it has an opinion about all your reminders" over a list where every
+// one of them said the opposite. Coverage counted entries the companion answered for; the rows
+// counted curves the weighting can actually read, and an unreadable curve is one it ignores.
+func TestCoverageCountsAdviceTheWeightingCanActuallyUse(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "k"}).Body.Close()
+
+	rem, err := h.store.CreateReminder(h.Context(), p.ID, "wash dishes")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	// Answered for, with a curve nothing can read — which is what the model was actually
+	// sending when this was noticed.
+	h.store.SetAdvice(h.Context(), []string{rem.ID}, map[string]store.Advice{
+		rem.ID: {Categories: []string{"chores"}, Shape: "7x24"},
+	})
+	h.store.RecordAdvised(h.Context(), p.ID, h.store.Now())
+
+	resp := h.do("GET", "/api/companion", nil)
+	defer resp.Body.Close()
+	var got struct {
+		Advice struct {
+			Status string `json:"status"`
+		} `json:"advice"`
+	}
+	decodeBody(t, resp, &got)
+	if got.Advice.Status != "none" {
+		t.Errorf("status = %q, want none — nothing it said can be used", got.Advice.Status)
+	}
+
+	// And the row says which shape it refused, rather than leaving somebody to guess.
+	list := h.do("GET", "/api/companion/advice", nil)
+	defer list.Body.Close()
+	var advice struct {
+		Reminders []struct {
+			Shape string `json:"shape"`
+		} `json:"reminders"`
+	}
+	decodeBody(t, list, &advice)
+	if len(advice.Reminders) != 1 || advice.Reminders[0].Shape != "7x24" {
+		t.Errorf("reminders = %+v, want the refused shape named", advice.Reminders)
+	}
+}
+
+// aWeek is a curve of the shape the weighting reads: seven days of forty-eight.
+//
+// A helper rather than make(store.Curve, store.Windows), which is what these tests said before
+// and was forty-eight empty days — invalid, and unnoticed while nothing checked.
+func aWeek() store.Curve {
+	c := make(store.Curve, store.Days)
+	for d := range c {
+		c[d] = make([]float64, store.Windows)
+	}
+	return c
 }

@@ -242,7 +242,21 @@ GET    /api/companion                    {configured, model, key_set, about, def
 PUT    /api/companion                    {api_key, model, about} → the above
 DELETE /api/companion                    → 204
 POST   /api/companion/test               {} → {model, tokens}
+GET    /api/companion/advice             {reminders: [{id, text, advised, categories?,
+                                          exclusive?, curve?, advised_at?}], days, windows}
+POST   /api/companion/advice/refresh     {} → 202
 ```
+
+`GET /api/companion/advice` is the open list with what the companion said about each, and
+carries a `curve` **only when it is the shape the weighting actually reads** — an answer the
+program ignores is not something to draw. `days` and `windows` come with it so the screen
+cannot disagree with the server about the size of a week.
+
+`POST /api/companion/advice/refresh` answers **202**, because nothing has happened yet: it
+marks the advice stale and wakes the loop, and the answer arrives whenever the model gets round
+to it. Asking inside the request would hold it open for minutes for a result nothing on that
+screen is waiting for. It cannot be used to spend a quota — a woken loop still declines to ask
+when nothing has changed since the last answer.
 
 Behind `requireSession` and never `requireAdmin`: a companion is one account's, unlike the
 relay. Why, in [companion.md](companion.md#the-companion-is-an-accounts-not-the-instances).

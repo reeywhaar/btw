@@ -29,28 +29,26 @@ const StalenessCap = 4.0
 
 // What the companion's advice does to a weight.
 //
-// A multiplier, never a replacement, and never zero. The companion moves a reminder around
-// somebody's week; it does not get to remove one. Silencing is a person's decision and has
-// exactly one expression — priority zero — and a model that could reach the same outcome by
-// saying "no good hours" would be a second, invisible way to make a reminder stop arriving.
+// The companion answers with a number from 0 to 1 for each half hour of the day, and it is
+// stretched onto this range and multiplied in. Nothing is a special case: no in-or-out, no
+// separate rule for a reminder wanting full attention, no threshold anywhere. A curve saying
+// 0.5 everywhere is a companion with no opinion, and comes to exactly 1.
 //
-// The numbers are ratios and only ratios matter. In its hours a reminder is five times as
-// likely as one outside them, twelve times if that one wants full attention. Staleness still
-// runs to four and keeps climbing underneath, so a reminder the companion never finds a moment
-// for still surfaces — later, and by a route nothing here has to special-case.
+// **Never zero, and not by rounding — by construction.** The floor is the guarantee: the
+// companion moves a reminder around the day, and does not get to remove one. Silencing is a
+// person's decision with exactly one expression, priority zero, and a model able to reach the
+// same outcome by answering zeroes would be a second and invisible way for something to stop
+// arriving.
+//
+// Three to one between the best half hour and the worst. Gentler than the twelve to one the
+// windows it replaced could reach, deliberately: a continuous curve applies its opinion to
+// every hour rather than to the handful inside a window, so the same strength per hour adds up
+// to far more. Staleness runs to four and keeps climbing underneath either way, so a reminder
+// the companion likes nowhere still surfaces — later, and by a route nothing here special-cases.
 const (
-	// InSlot is the boost while now falls inside one of the reminder's windows.
-	InSlot = 3.0
-
-	// OutOfSlot damps a reminder outside all of them. Gently: the companion is guessing from a
-	// paragraph somebody wrote about themselves, and a wrong guess should cost a nudge its
-	// place in the queue rather than its place in the product.
-	OutOfSlot = 0.6
-
-	// OutOfSlotExclusive damps harder for something wanting full attention. Suggesting a show
-	// at a bad moment costs nothing — it is ignored, and ignoring is free. Suggesting an hour
-	// of concentration at a bad moment is the notification people turn off.
-	OutOfSlotExclusive = 0.25
+	// Floor is the multiplier at a confidence of 0, and Ceiling at 1.
+	Floor   = 0.5
+	Ceiling = 1.5
 )
 
 // nominalInterval is the denominator for a reminder that states no floor of its own. It
@@ -69,10 +67,9 @@ const nominalInterval = 24 * time.Hour
 // morning's, is how a notification channel gets turned off for good by somebody who was
 // otherwise happy with it.
 //
-// `local` is where `now` falls in the person's own week — the day, Monday-origin, and the
-// minute since their local midnight. It arrives already converted because internal/rhythm is
-// the one place in the program that knows what time it is anywhere; this function compares
-// integers and stays a pure function of its arguments.
+// `local` is where `now` falls in the person's own week. It arrives already converted because
+// internal/rhythm is the one place in the program that knows what time it is anywhere; this
+// function indexes with integers and stays a pure function of its arguments.
 func Pick(candidates []store.Candidate, now time.Time, local Moment, exclude, seed string) (store.Candidate, bool) {
 	// Silenced reminders are dropped here and not merely weighted to zero. The store filters
 	// them too, but the rule belongs to this function: the uniform fallback below would
@@ -177,7 +174,7 @@ func Weight(c store.Candidate, now time.Time, local Moment) float64 {
 
 // Moment is where an instant falls in somebody's week.
 //
-// Day is 0 for Monday through 6 for Sunday, matching [store.Slot]. Minute is since local
+// Day is 0 for Monday through 6 for Sunday, matching [store.Curve]. Minute is since local
 // midnight, the same units a rhythm's waking window uses.
 type Moment struct {
 	Day    int
@@ -188,20 +185,20 @@ type Moment struct {
 //
 // Exactly 1 when it has said nothing, which is what makes the whole feature optional at the
 // level of one reminder rather than one account: a reminder written a minute ago, before the
-// next round of questions, weighs precisely what it weighed before any of this existed.
+// next round of questions, weighs precisely what it weighed before any of this existed. Also
+// exactly 1 for an answer that could not be read, which is the same situation from here.
 func Advice(c store.Candidate, local Moment) float64 {
 	if !c.Advised {
 		return 1
 	}
-	for _, s := range c.Slots {
-		if s.Covers(local.Day, local.Minute) {
-			return InSlot
-		}
+	confidence, ok := c.Curve.At(local.Day, local.Minute)
+	if !ok {
+		return 1
 	}
-	if c.Exclusive {
-		return OutOfSlotExclusive
-	}
-	return OutOfSlot
+	// Clamped rather than trusted. A model asked for 0 to 1 mostly answers inside it, and a
+	// stray 1.4 read literally would hand one reminder a multiplier no honest answer can reach.
+	confidence = min(max(confidence, 0), 1)
+	return Floor + confidence*(Ceiling-Floor)
 }
 
 func seedFrom(s string) uint64 {

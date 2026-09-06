@@ -36,8 +36,6 @@ export async function request<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-  if (response.status === 204) return undefined as T;
-
   // The server answers every refusal with {"error": "a sentence"}, written for the person
   // who will read it rather than for a log grep. Showing that sentence is the whole point
   // of it existing.
@@ -52,5 +50,13 @@ export async function request<T>(
     throw new ApiError(response.status, message);
   }
 
-  return (await response.json()) as T;
+  // Read as text and parsed here rather than through response.json(), because **not every
+  // successful answer has a body**. This used to test for 204 alone, which was true until the
+  // first handler answered 202 — and a 202 went to JSON.parse("") and surfaced as "unexpected
+  // end of data" on a button that had in fact worked.
+  //
+  // A body's absence is the thing to check, not a particular status that happens to imply it.
+  const text = await response.text();
+  if (text === "") return undefined as T;
+  return JSON.parse(text) as T;
 }

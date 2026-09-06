@@ -230,7 +230,7 @@ inconsistency to be repaired.
 ### `advice`
 
 ```
-reminder_id, exclusive, categories, slots, advised_at
+reminder_id, version, body, advised_at
 ```
 
 What the [companion](companion.md) made of one reminder. Here rather than in `main.db` because
@@ -238,23 +238,29 @@ every row is recomputable from what is there — the reminders, the account's `a
 — and nobody typed a word of it. It is also the half that churns: `main.db` is written when a
 person types something, and advice is rewritten whenever anything moves.
 
-`slots` is JSON, `[{"day":0-6 from monday,"start":minutes,"end":minutes}]`, in **minutes since
-local midnight** — the same units and the same origin a rhythm's waking window uses, against
-the same IANA name. Nothing outside `internal/rhythm` converts; everything else compares
-integers. An `end` at or before its `start` runs past midnight into the next day, which is how
-somebody who goes to bed at four gets a window that means four hours.
+**One JSON body under a version, not a column per field.** Columns were the first shape of this
+table and were the wrong instinct: this is a model's answer, and what is worth asking for
+changes whenever the prompt does. It went from a list of weekly windows to a curve over one day
+inside a week, which as columns would have been a migration carrying rows written under an
+older idea of what the answer was.
 
-`categories` is JSON and **nothing reads it yet**. Kept because asking again is the expensive
-part — a free key allows fifty questions a day — so discarding half of an answer already paid
-for, to save a column, would be paid back one request per reminder.
+A row whose `version` the reader does not recognise **is no advice at all**. That is not a
+fallback, it is the point: the row is recomputable, the account is already marked stale, and the
+alternative is a reader guessing at a field that meant something else when it was written. The
+version is a column rather than a field inside the body so that reading it costs no parsing.
 
-Replaced **wholesale** for the whole set each time, not row by row: a reminder the companion
-was asked about and said nothing for has to lose what it was told last time, and a loop of
-upserts leaves exactly that behind.
+The body holds `curve` — 48 numbers from 0 to 1, one per half hour of the person's local day —
+along with `exclusive` and `categories`, **neither of which anything reads**. They are kept
+because asking again is the expensive part, at fifty questions a day on a free key, so
+discarding half an answer already paid for would be paid back one request per reminder.
+
+Replaced **wholesale** for the whole set each time, not row by row: a reminder the companion was
+asked about and said nothing for has to lose what it was told last time, and a loop of upserts
+leaves exactly that behind.
 
 No foreign key to `reminders`, because no constraint can cross a database. A row for a deleted
-reminder is garbage to collect, and is never consulted meanwhile — the weighting joins from the
-reminders it already has.
+reminder is garbage to collect — and is collected, when a reminder is deleted outright rather
+than merely finished with.
 
 ### `advice_state`
 

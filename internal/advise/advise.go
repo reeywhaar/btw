@@ -68,6 +68,11 @@ type Adviser struct {
 	Every time.Duration
 }
 
+// New makes an adviser.
+func New(st *store.Store, log *slog.Logger, alerts Alerter) *Adviser {
+	return &Adviser{Store: st, Log: log, Alerts: alerts}
+}
+
 // Run works until the context is done.
 //
 // The first pass is immediate rather than one interval in, for the reason the backup pusher's
@@ -109,45 +114,60 @@ func (a *Adviser) Once(ctx context.Context) {
 		default:
 		}
 
-		state, err := a.Store.Advice(ctx, id)
-		if err != nil {
-			a.Log.Error("could not read advice state", "principal", id, "err", err)
-			continue
-		}
-		if !state.Stale {
-			continue
-		}
-
-		err = a.advise(ctx, id)
-		if err == nil {
-			continue
-		}
-
-		// Recorded against the account as well as logged, so that somebody whose key stopped
-		// working can be told rather than left wondering why nothing improves. The flag stays
-		// set, so the next pass tries again.
-		limited := errors.Is(err, openrouter.ErrRateLimited)
-		a.Log.Warn("could not advise", "principal", id, "limited", limited, "err", err)
-		if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error(), limited); err != nil {
-			a.Log.Error("could not record an advice failure", "principal", id, "err", err)
-		}
-		if !limited {
-			// A quota is not worth waking somebody for. It resolves itself, nothing they could
-			// do would help, and a notification saying so is one that trains them to ignore
-			// the next one.
-			a.tell(ctx, id, state, err)
-		}
-
-		// Nothing is throttled and the pass is not abandoned, because **a quota is per key and
-		// every account brings its own**. One person's key having run out says nothing about
-		// the next person's, and pacing between two accounts would be spreading requests
-		// across quotas that were never shared.
-		//
-		// So a rate limit is only worth telling apart from every other failure, which the
-		// sentinel does: it wants a wait rather than a person, and the next pass is half an
-		// hour away — which is the wait. One account cannot reach the limit alone, since it
-		// costs at most one question per pass.
+		a.Look(ctx, id)
 	}
+}
+
+// Look asks about one person, when their advice wants asking about, and reports what went
+// wrong if anything did.
+//
+// Exported because a person pressing "ask again" waits for the answer. That press used to hand
+// the work to the loop and return before anything had happened, which is defensible for a
+// background job and poor for a button: somebody who has just rewritten what they say about
+// themselves wants to see the difference, not a note telling them to look again later.
+//
+// The error is returned as well as recorded, so a press can show it. A pass ignores what comes
+// back — by then it has already been logged, alerted on, and written against the account.
+func (a *Adviser) Look(ctx context.Context, id string) error {
+	state, err := a.Store.Advice(ctx, id)
+	if err != nil {
+		a.Log.Error("could not read advice state", "principal", id, "err", err)
+		return err
+	}
+	if !state.Stale {
+		return nil
+	}
+
+	err = a.advise(ctx, id)
+	if err == nil {
+		return nil
+	}
+
+	// Recorded against the account as well as logged, so that somebody whose key stopped
+	// working can be told rather than left wondering why nothing improves. The flag stays
+	// set, so the next pass tries again.
+	limited := errors.Is(err, openrouter.ErrRateLimited)
+	a.Log.Warn("could not advise", "principal", id, "limited", limited, "err", err)
+	if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error(), limited); err != nil {
+		a.Log.Error("could not record an advice failure", "principal", id, "err", err)
+	}
+	if !limited {
+		// A quota is not worth waking somebody for. It resolves itself, nothing they could
+		// do would help, and a notification saying so is one that trains them to ignore
+		// the next one.
+		a.tell(ctx, id, state, err)
+	}
+
+	// Nothing is throttled and the pass is not abandoned, because **a quota is per key and
+	// every account brings its own**. One person's key having run out says nothing about
+	// the next person's, and pacing between two accounts would be spreading requests
+	// across quotas that were never shared.
+	//
+	// So a rate limit is only worth telling apart from every other failure, which the
+	// sentinel does: it wants a wait rather than a person, and the next pass is half an
+	// hour away — which is the wait. One account cannot reach the limit alone, since it
+	// costs at most one question per pass.
+	return err
 }
 
 // advise is one question about one person.
@@ -201,7 +221,7 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 		known[r.ID] = true
 	}
 
-	advice, dropped := parse(reply, known)
+	advice, dropped, misshapen := parse(reply, known)
 	if err := a.Store.SetAdvice(ctx, ids, advice); err != nil {
 		return err
 	}
@@ -213,7 +233,9 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	// the nudge log follows, and for the same reason. The counts are what an operator needs.
 	a.Log.Info("advised", "principal", principalID, "model", res.Model,
 		"reminders", len(reminders), "answered", len(advice), "dropped", dropped,
-		"tokens", res.Tokens)
+		// The shapes and not the answers: "7x24" says what to change about the question, and
+		// says nothing about anybody's reminders.
+		"misshapen", misshapen, "tokens", res.Tokens)
 	return nil
 }
 
@@ -282,6 +304,16 @@ func sentence(s string) string {
 // either wasteful for somebody with three or a truncation for somebody with forty. The floor
 // covers a reasoning model's thinking, which counts against the same number even though it is
 // excluded from what comes back.
+//
+// The per-reminder figure is almost entirely the curve: seven days of forty-eight numbers at
+// one decimal place is well over a thousand tokens on its own, before anything around it. A
+// truncated answer is a torn-off JSON object rather than a short one, so the room is worth more
+// than the tokens it costs.
+//
+// The ceiling is where this stops being free. Somebody with a very long list is asking for more
+// output than most models will produce in one go, and the honest answer is that the question
+// wants splitting rather than the ceiling raising — which is a thing to build when somebody
+// meets it, not before.
 func budget(reminders int) int {
-	return min(2000+300*reminders, 16000)
+	return min(2000+1800*reminders, 32000)
 }

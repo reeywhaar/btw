@@ -185,6 +185,123 @@ func (s *Server) deleteCompanion(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// listAdvice is what the companion currently thinks, as it is actually stored.
+//
+// A window onto the weighting rather than a setting. Everything else about the companion is
+// invisible by design — btw shows no schedule — but a wrong answer was otherwise something
+// somebody could feel and never see, and "it has an opinion about some of your reminders" does
+// not say *which* opinion.
+//
+// Only the open list, and only advice in the current shape, because that is exactly what the
+// draw reads. A screen showing anything else would be showing something that is not happening.
+func (s *Server) listAdvice(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	reminders, err := s.store.Reminders(r.Context(), p.ID, false)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	ids := make([]string, len(reminders))
+	for i, rem := range reminders {
+		ids[i] = rem.ID
+	}
+	advice, err := s.store.AdviceFor(r.Context(), ids)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	out := make([]map[string]any, 0, len(reminders))
+	for _, rem := range reminders {
+		row := map[string]any{
+			"id":      rem.ID,
+			"text":    rem.Text,
+			"advised": false,
+		}
+		if a, ok := advice[rem.ID]; ok {
+			row["advised"] = true
+			row["categories"] = a.Categories
+			row["exclusive"] = a.Exclusive
+			// Sent whole, and only when it is the shape the weighting reads. A curve the
+			// program would ignore is not something to draw.
+			if a.Curve.Valid() {
+				row["curve"] = a.Curve
+			} else if a.Shape != "" {
+				// What arrived instead, so the screen can name it. "7x24" says the model
+				// answered by the hour; "obj:6" says it left a day out.
+				row["shape"] = a.Shape
+			}
+			row["advised_at"] = unixOrNil(a.AdvisedAt)
+		}
+		out = append(out, row)
+	}
+
+	// The state rides along, so a screen watching for a fresh answer has one thing to watch
+	// rather than two queries it has to reconcile. `stale` is the whole of it: true means an
+	// answer is still owed, and it going false is the moment the drawing below changed.
+	state, err := s.store.Advice(r.Context(), p.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	// An envelope rather than a bare array, per docs/api_design.md, which is what lets a field
+	// be added later.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"reminders":  out,
+		"stale":      state.Stale,
+		"advised_at": unixOrNil(state.AdvisedAt),
+		"error":      state.Error,
+		// So the screen can lay a day out without knowing the shape by heart, and cannot
+		// disagree with the server about it.
+		"days":    store.Days,
+		"windows": store.Windows,
+	})
+}
+
+// refreshAdvice asks the companion again, and waits for the answer.
+//
+// It used to hand the work to the loop and return 202, which is right for a background job and
+// wrong for a button: somebody who has just rewritten what they say about themselves presses
+// this to see the difference, and a screen that answers "asked for, come back later" makes them
+// judge a change they cannot see.
+//
+// So it blocks, for as long as the model takes — bounded by the loop's own timeout — and
+// answers with the advice as it now stands. That is a long request by the standards of
+// everything else here, and it is a deliberate press with somebody watching it.
+//
+// Rate limited, because it makes an outbound request on the caller's behalf against a quota
+// with fifty a day in it. The screen holds a press for twenty seconds as well; this is the
+// floor under a screen that is not the one being used.
+func (s *Server) refreshAdvice(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	if !s.adviceLimit.allow(p.ID) {
+		writeError(w, http.StatusTooManyRequests, "that was just asked; give it a moment")
+		return
+	}
+	if s.advise == nil {
+		writeError(w, http.StatusServiceUnavailable, "nothing is asking on your behalf")
+		return
+	}
+
+	// Marked first, because Look declines when nothing has changed — which is right for the
+	// loop and wrong for a press that means "ask anyway".
+	if err := s.store.MarkAdviceStale(r.Context(), p.ID); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	if err := s.advise.Look(r.Context(), p.ID); err != nil {
+		// 502 rather than 500, for the reason docs/mail.md gives about a refused send:
+		// everything on this side worked and something upstream did not.
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	// The answer itself, so the screen redraws from the response rather than asking again.
+	s.listAdvice(w, r)
+}
+
 // testCompanion puts one question to the model and reports what answered.
 //
 // Against what is in the form, not against what was last saved — unlike the relay's test

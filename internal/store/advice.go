@@ -9,48 +9,88 @@ import (
 	"time"
 )
 
-// Slot is a window in somebody's week when the companion thinks a reminder would land well.
+// AdviceVersion is the shape [Advice] is in.
 //
-// Minutes since local midnight, the same units and the same origin a rhythm's waking window
-// uses, against the same IANA name. Nothing here knows which zone that is: the conversion
-// happens once, in internal/rhythm, and everything downstream compares integers.
-type Slot struct {
-	// Day is 0 for Monday through 6 for Sunday. Monday because the week starts there for the
-	// person answering, and an explicit origin is what stops a Sunday being read as a Monday
-	// by whichever end of the wire disagreed.
-	Day   int `json:"day"`
-	Start int `json:"start"`
-	End   int `json:"end"`
+// Bumped whenever what the companion is asked for changes. A stored row in any other version is
+// read as no advice at all — it is recomputable, and a reader guessing at a field that meant
+// something else when it was written is worse than one round of questions.
+const AdviceVersion = 4
+
+// The shape of a week, as the companion is asked to describe it.
+//
+// Half an hour is as fine as the answer can honestly be: the scheduler wakes on a five-minute
+// tick and a person's sense of "the evening" has no edges sharper than this. Finer would be
+// asking a model for precision it does not have and paying tokens for it.
+const (
+	Days          = 7
+	Windows       = 48
+	WindowMinutes = 24 * 60 / Windows
+)
+
+// Curve is how well each half hour of somebody's week suits one reminder, from 0 to 1.
+//
+// Seven days of forty-eight, Monday first — **seven arrays rather than one of 336**, and that
+// is a fact about what a model can do rather than about the data. Asked for one long list it
+// loses count somewhere in the middle and every value after that names the wrong hour, which is
+// worse than no answer because it is confidently wrong. Asked for a day at a time it has a
+// short list and a name for it.
+//
+// Read against the person's own clock. Nothing here converts anything: the day and the minute
+// are worked out once, in internal/rhythm, and this is two indexes.
+type Curve [][]float64
+
+// Valid reports whether a curve is the right shape to be read.
+func (c Curve) Valid() bool {
+	if len(c) != Days {
+		return false
+	}
+	for _, day := range c {
+		if len(day) != Windows {
+			return false
+		}
+	}
+	return true
 }
 
-// Covers reports whether a local moment falls inside the slot.
+// At is how well the half hour containing a local moment suits this reminder.
 //
-// `day` is Monday-origin like Slot.Day, and `minute` is since local midnight.
-func (s Slot) Covers(day, minute int) bool {
-	if s.End > s.Start {
-		return day == s.Day && minute >= s.Start && minute < s.End
+// `day` is 0 for Monday through 6 for Sunday. The bool is false for a curve that is not the
+// right shape, which is a model's answer that could not be understood rather than one saying
+// "no hour suits this" — and the two want opposite treatment.
+func (c Curve) At(day, minute int) (float64, bool) {
+	if !c.Valid() {
+		return 0, false
 	}
-	// An end at or before its start runs past midnight. Two pieces: the evening it began in,
-	// and the small hours of the day after — which for a Sunday slot is a Monday.
-	//
-	// The equal case is here rather than treated as an empty window on purpose. A companion
-	// answering 22:00–22:00 meant a whole day, not nothing, and reading it as nothing would
-	// silently remove a reminder from consideration for a week.
-	if day == s.Day && minute >= s.Start {
-		return true
+	if minute < 0 {
+		minute = 0
 	}
-	return day == (s.Day+1)%7 && minute < s.End
+	// Modulo rather than bounds checks, so a minute past the end of a day — which is what an
+	// hour written as 24:00 comes to — wraps rather than being refused.
+	return c[((day%Days)+Days)%Days][(minute/WindowMinutes)%Windows], true
 }
 
 // Advice is what the companion made of one reminder.
+//
+// Stored as one JSON body under [AdviceVersion] rather than a column per field: this is a
+// model's answer, and what is worth asking for changes whenever the prompt does.
 type Advice struct {
-	// Exclusive is whether it wants somebody's full attention.
-	Exclusive bool
-	// Categories is what it called the reminder. Nothing reads this yet — see the migration
-	// for why it is stored anyway.
-	Categories []string
-	Slots      []Slot
-	AdvisedAt  time.Time
+	// Exclusive is whether it wants somebody's full attention. Nothing reads it since the
+	// curve replaced the windows it used to sharpen — see docs/nudges.md.
+	Exclusive bool `json:"exclusive"`
+
+	// Categories is what it called the reminder. Nothing reads this either.
+	Categories []string `json:"categories"`
+
+	Curve Curve `json:"curve"`
+
+	// Shape is what arrived when the curve could not be read — "7x24", "obj:7", "336".
+	//
+	// Kept because the alternative is a screen saying "not in a shape that could be read" and
+	// leaving somebody to guess which shape, with the only answer in a log they may not have.
+	// It says nothing about the reminder it belongs to.
+	Shape string `json:"shape,omitempty"`
+
+	AdvisedAt time.Time `json:"-"`
 }
 
 // SetAdvice replaces what the companion said about one person's reminders, in one transaction.
@@ -71,18 +111,19 @@ func (s *Store) SetAdvice(ctx context.Context, keep []string, advice map[string]
 		}
 	}
 	for id, a := range advice {
-		categories, err := json.Marshal(orEmpty(a.Categories))
-		if err != nil {
-			return fmt.Errorf("encode categories %s: %w", id, err)
+		if a.Categories == nil {
+			a.Categories = []string{}
 		}
-		slots, err := json.Marshal(orEmptySlots(a.Slots))
+		if a.Curve == nil {
+			a.Curve = Curve{}
+		}
+		body, err := json.Marshal(a)
 		if err != nil {
-			return fmt.Errorf("encode slots %s: %w", id, err)
+			return fmt.Errorf("encode advice %s: %w", id, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO advice (reminder_id, exclusive, categories, slots, advised_at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			id, a.Exclusive, string(categories), string(slots), unix(s.Now())); err != nil {
+			`INSERT INTO advice (reminder_id, version, body, advised_at) VALUES (?, ?, ?, ?)`,
+			id, AdviceVersion, string(body), unix(s.Now())); err != nil {
 			return fmt.Errorf("set advice %s: %w", id, err)
 		}
 	}
@@ -114,6 +155,10 @@ type AdviceState struct {
 	//
 	// A missing row is stale, not fresh. A derived.db thrown away takes the advice with it, so
 	// the state saying "already asked" must not outlive what it was asked about.
+	//
+	// So is an answer that arrived under a shape the reader no longer understands, which is
+	// what makes changing [AdviceVersion] enough on its own: without it, an account already
+	// advised would keep this false while every row of its advice was being ignored.
 	Stale bool
 
 	// AdvisedAt is when an answer last arrived, and AttemptedAt when one was last tried for.
@@ -140,27 +185,33 @@ func (s *Store) Advice(ctx context.Context, principalID string) (AdviceState, er
 		st                 AdviceState
 		advised, attempted sql.NullInt64
 	)
+	var version int
 	err := s.derived.QueryRowContext(ctx,
-		`SELECT stale, advised_at, attempted_at, error, limited, alerted
+		`SELECT stale, advised_at, attempted_at, error, limited, alerted, version
 		   FROM advice_state WHERE principal_id = ?`,
-		principalID).Scan(&st.Stale, &advised, &attempted, &st.Error, &st.Limited, &st.Alerted)
+		principalID).Scan(&st.Stale, &advised, &attempted, &st.Error, &st.Limited, &st.Alerted, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AdviceState{Stale: true}, nil
 	}
 	if err != nil {
 		return AdviceState{}, fmt.Errorf("read advice state: %w", err)
 	}
+	st.Stale = st.Stale || version != AdviceVersion
 	st.AdvisedAt = timeFrom(advised)
 	st.AttemptedAt = timeFrom(attempted)
 	return st, nil
 }
 
-// AdviceCoverage counts how much of somebody's open list has been answered for.
+// AdviceCoverage counts how much of somebody's open list the companion can actually place.
+//
+// **Usable advice, not answered-for.** An entry whose curve could not be read is an entry the
+// weighting ignores, so counting it made the settings block say "it has an opinion about all
+// your reminders" over a list where every single one said the opposite. What a person is being
+// told is whether it is working, and an answer nothing reads is not working.
 //
 // Two numbers that exist only to be compared. Neither reaches a response body — see the rule
 // in docs/api_design.md about counts — and what the interface is told is "all of them", "some
-// of them" or "none", which is what somebody actually needs to know and carries no number that
-// goes up.
+// of them" or "none", which carries no number that goes up.
 func (s *Store) AdviceCoverage(ctx context.Context, principalID string) (open, answered int, err error) {
 	rows, err := s.main.QueryContext(ctx,
 		`SELECT id FROM reminders WHERE principal_id = ? AND done_at IS NULL`, principalID)
@@ -181,11 +232,16 @@ func (s *Store) AdviceCoverage(ctx context.Context, principalID string) (open, a
 		return 0, 0, err
 	}
 
-	advice, err := s.adviceFor(ctx, ids)
+	advice, err := s.AdviceFor(ctx, ids)
 	if err != nil {
 		return 0, 0, err
 	}
-	return len(ids), len(advice), nil
+	for _, a := range advice {
+		if a.Curve.Valid() {
+			answered++
+		}
+	}
+	return len(ids), answered, nil
 }
 
 // MarkAdviceAlerted records that the person has been told their companion stopped working.
@@ -214,15 +270,15 @@ func (s *Store) ForgetAdvice(ctx context.Context, reminderID string) error {
 // RecordAdvised marks one person's advice fresh.
 func (s *Store) RecordAdvised(ctx context.Context, principalID string, at time.Time) error {
 	_, err := s.derived.ExecContext(ctx,
-		`INSERT INTO advice_state (principal_id, stale, advised_at, attempted_at, error, limited, alerted)
-		 VALUES (?, 0, ?, ?, '', 0, 0)
+		`INSERT INTO advice_state (principal_id, stale, advised_at, attempted_at, error, limited, alerted, version)
+		 VALUES (?, 0, ?, ?, '', 0, 0, ?)
 		 ON CONFLICT (principal_id) DO UPDATE SET
 		   stale = 0, advised_at = excluded.advised_at,
 		   attempted_at = excluded.attempted_at, error = '', limited = 0,
 		   -- Lowered by a round that worked, so a key that breaks again months later is
 		   -- worth another message.
-		   alerted = 0`,
-		principalID, unix(at), unix(at))
+		   alerted = 0, version = excluded.version`,
+		principalID, unix(at), unix(at), AdviceVersion)
 	if err != nil {
 		return fmt.Errorf("record advised: %w", err)
 	}
@@ -249,21 +305,26 @@ func (s *Store) RecordAdviceFailure(ctx context.Context, principalID string, at 
 	return nil
 }
 
-// adviceFor reads what the companion said about a set of reminders.
+// AdviceFor reads what the companion said about a set of reminders.
 //
 // Two queries and no join, because the reminders are in main.db and this is derived.db and no
 // statement may span them. The set is one person's open reminders, so it is small.
-func (s *Store) adviceFor(ctx context.Context, ids []string) (map[string]Advice, error) {
+//
+// **Only the current version.** A row written under an older shape is left where it is and read
+// as nothing: the account is already marked stale, so the next round replaces it, and a reader
+// half-understanding an older answer is the failure this version column exists to prevent.
+func (s *Store) AdviceFor(ctx context.Context, ids []string) (map[string]Advice, error) {
 	out := make(map[string]Advice, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
 
-	query := `SELECT reminder_id, exclusive, categories, slots, advised_at FROM advice WHERE reminder_id IN (?` +
-		repeatArgs(len(ids)-1) + `)`
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
+	query := `SELECT reminder_id, body, advised_at FROM advice
+	           WHERE version = ? AND reminder_id IN (?` + repeatArgs(len(ids)-1) + `)`
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, AdviceVersion)
+	for _, id := range ids {
+		args = append(args, id)
 	}
 
 	rows, err := s.derived.QueryContext(ctx, query, args...)
@@ -274,37 +335,24 @@ func (s *Store) adviceFor(ctx context.Context, ids []string) (map[string]Advice,
 
 	for rows.Next() {
 		var (
-			id                string
-			a                 Advice
-			categories, slots string
-			advisedAt         sql.NullInt64
+			id        string
+			body      string
+			advisedAt sql.NullInt64
 		)
-		if err := rows.Scan(&id, &a.Exclusive, &categories, &slots, &advisedAt); err != nil {
+		if err := rows.Scan(&id, &body, &advisedAt); err != nil {
 			return nil, fmt.Errorf("read advice row: %w", err)
 		}
-		// Unparseable JSON is treated as no advice rather than as an error. It can only come
-		// from a version that wrote a different shape, and refusing to nudge somebody at all
-		// because a model's answer from a month ago no longer decodes is the wrong trade.
-		json.Unmarshal([]byte(categories), &a.Categories)
-		json.Unmarshal([]byte(slots), &a.Slots)
+		var a Advice
+		// A body that will not decode is treated as no advice rather than as an error. It can
+		// only come from a version that claimed this number and wrote something else, and
+		// refusing to nudge somebody at all over it would be the wrong trade.
+		if err := json.Unmarshal([]byte(body), &a); err != nil {
+			continue
+		}
 		a.AdvisedAt = timeFrom(advisedAt)
 		out[id] = a
 	}
 	return out, rows.Err()
-}
-
-func orEmpty(v []string) []string {
-	if v == nil {
-		return []string{}
-	}
-	return v
-}
-
-func orEmptySlots(v []Slot) []Slot {
-	if v == nil {
-		return []Slot{}
-	}
-	return v
 }
 
 // repeatArgs is the `, ?` tail of an IN list holding n more placeholders.

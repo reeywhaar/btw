@@ -91,10 +91,8 @@ func TestOneQuestionCoversEverybodysReminders(t *testing.T) {
 	cv, _ := st.CreateReminder(ctx, p.ID, "update cv")
 
 	g.reply = `{"results":[
-		{"id":"` + show.ID + `","category":["entertainment"],"exclusive":false,
-		 "slots":[{"day":"mon","start":"22:00","end":"02:00"},{"day":"tue","start":"22:00","end":"02:00"}]},
-		{"id":"` + cv.ID + `","category":["work","admin"],"exclusive":true,
-		 "slots":[{"day":"sat","start":"14:00","end":"18:00"}]}
+		{"id":"` + show.ID + `","category":["entertainment"],"exclusive":false,"curve":` + curve(0.9) + `},
+		{"id":"` + cv.ID + `","category":["work","admin"],"exclusive":true,"curve":` + curve(0.2) + `}
 	]}`
 
 	adviser(st).Once(ctx)
@@ -117,15 +115,9 @@ func TestOneQuestionCoversEverybodysReminders(t *testing.T) {
 		if !c.Advised {
 			t.Fatalf("%q came back unadvised", c.Text)
 		}
-		switch c.ID {
-		case show.ID:
-			if c.Exclusive || len(c.Slots) != 2 {
-				t.Errorf("the show = %+v, want two windows and not exclusive", c)
-			}
-		case cv.ID:
-			if !c.Exclusive || len(c.Slots) != 1 {
-				t.Errorf("the cv = %+v, want one window and exclusive", c)
-			}
+		want := map[string]float64{show.ID: 0.9, cv.ID: 0.2}[c.ID]
+		if v, ok := c.Curve.At(0, 0); !ok || v != want {
+			t.Errorf("%q = %+v, want a curve reading %v", c.Text, c.Curve, want)
 		}
 	}
 
@@ -240,7 +232,7 @@ func TestAdviceNeverSilencesAnythingItCannotPlace(t *testing.T) {
 	p := person(t, st, "misha")
 	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
 	rem, _ := st.CreateReminder(ctx, p.ID, "the model has no idea when to do this")
-	g.reply = `{"results":[{"id":"` + rem.ID + `","category":[],"exclusive":true,"slots":[]}]}`
+	g.reply = `{"results":[{"id":"` + rem.ID + `","category":[],"exclusive":true,"curve":` + curve(0) + `}]}`
 
 	adviser(st).Once(ctx)
 
@@ -251,8 +243,8 @@ func TestAdviceNeverSilencesAnythingItCannotPlace(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Candidates() = %d, want the reminder still there", len(got))
 	}
-	if !got[0].Advised || len(got[0].Slots) != 0 {
-		t.Errorf("candidate = %+v, want it answered for with no hours", got[0])
+	if v, ok := got[0].Curve.At(0, 0); !got[0].Advised || !ok || v != 0 {
+		t.Errorf("candidate = %+v, want it answered for and still drawable", got[0])
 	}
 }
 
@@ -366,8 +358,8 @@ func TestAdviceOutlivesADoneReminderAndNotADeletedOne(t *testing.T) {
 	gone, _ := st.CreateReminder(ctx, p.ID, "call the dentist")
 
 	g.reply = `{"results":[
-		{"id":"` + kept.ID + `","slots":[{"day":"mon","start":"09:00","end":"10:00"}]},
-		{"id":"` + gone.ID + `","slots":[{"day":"tue","start":"09:00","end":"10:00"}]}
+		{"id":"` + kept.ID + `","curve":` + curve(0.8) + `},
+		{"id":"` + gone.ID + `","curve":` + curve(0.8) + `}
 	]}`
 	adviser(st).Once(ctx)
 

@@ -68,3 +68,53 @@ export const postCompanionTest = (attempt: {
     method: "POST",
     body: attempt,
   });
+
+/** One reminder as the weighting currently sees it. */
+export type AdvisedReminder = {
+  id: string;
+  text: string;
+  advised: boolean;
+  categories?: string[];
+  exclusive?: boolean;
+  /**
+   * Seven days of forty-eight numbers, Monday first, each 0 to 1. Absent when the companion
+   * has said nothing about this reminder, or said something the weighting cannot read.
+   */
+  curve?: number[][];
+  /**
+   * What arrived when the curve could not be read — "7x24", "obj:6". Present only then, and
+   * only so the screen can say which shape it refused rather than leaving somebody guessing.
+   */
+  shape?: string;
+  advised_at?: number | null;
+};
+
+export type AdviceList = {
+  reminders: AdvisedReminder[];
+  /**
+   * Whether an answer is still owed. Going false is the moment the drawing changed, which is
+   * what lets a screen wait for a fresh look rather than telling somebody to come back.
+   */
+  stale: boolean;
+  advised_at: number | null;
+  /** Why the last attempt failed, when it did. */
+  error: string;
+  /** The shape, from the server, so the screen cannot disagree with it about the size. */
+  days: number;
+  windows: number;
+};
+
+export const getCompanionAdvice = () =>
+  request<AdviceList>("/api/companion/advice");
+
+/**
+ * Asks the companion again, and waits for the answer.
+ *
+ * Slow on purpose — as slow as the model — and it comes back with the advice as it now stands,
+ * so the screen redraws from the reply rather than asking again.
+ */
+export const postCompanionAdviceRefresh = () =>
+  request<AdviceList>("/api/companion/advice/refresh", {
+    method: "POST",
+    body: {},
+  });

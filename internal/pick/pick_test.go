@@ -8,10 +8,25 @@ import (
 	"btw/internal/store"
 )
 
-// whenever is the local moment these tests are run at. None of their candidates carries
-// advice, so the multiplier is one and the moment cannot reach the weight — naming it says so
-// rather than leaving a reader to check.
+// whenever is the moment in the local week these tests are run at. None of their candidates
+// carries advice, so the multiplier is one and the moment cannot reach the weight — naming it
+// says so rather than leaving a reader to check.
 var whenever = Moment{}
+
+// flat is a curve saying the same thing about every half hour of every day.
+func flat(v float64) store.Curve {
+	c := make(store.Curve, store.Days)
+	for d := range c {
+		c[d] = make([]float64, store.Windows)
+		for i := range c[d] {
+			c[d][i] = v
+		}
+	}
+	return c
+}
+
+// at is a moment in the week, for the tests that care which.
+func at(day, minute int) Moment { return Moment{Day: day, Minute: minute} }
 
 var now = time.Date(2026, 8, 29, 16, 20, 0, 0, time.UTC)
 
@@ -192,113 +207,141 @@ func TestAReminderWithNoAdviceWeighsExactlyWhatItDidBefore(t *testing.T) {
 	now := time.Now()
 	c := candidate("r", 50, 24*time.Hour)
 
-	inside := Moment{Day: 2, Minute: 15 * 60}
-	outside := Moment{Day: 5, Minute: 3 * 60}
-	if Weight(c, now, inside) != Weight(c, now, outside) {
-		t.Error("the moment moved the weight of a reminder nothing has been said about")
+	if Weight(c, now, at(0, 3*60)) != Weight(c, now, at(4, 15*60)) {
+		t.Error("the hour moved the weight of a reminder nothing has been said about")
 	}
-	if got, want := Advice(c, inside), 1.0; got != want {
-		t.Errorf("Advice() with nothing said = %v, want %v", got, want)
+	if got := Advice(c, at(0, 15*60)); got != 1 {
+		t.Errorf("Advice() with nothing said = %v, want 1", got)
+	}
+
+	// And an answer that could not be read is the same situation from here.
+	unreadable := c
+	unreadable.Advised = true
+	unreadable.Curve = store.Curve{{0.9}, {0.9}}
+	if got := Advice(unreadable, at(0, 15*60)); got != 1 {
+		t.Errorf("Advice() with an unreadable curve = %v, want 1", got)
 	}
 }
 
-func TestAdviceLiftsAReminderInsideItsHoursAndDampsItOutside(t *testing.T) {
+// The curve is stretched onto the multiplier's range and nothing else happens to it: no
+// threshold, no in-or-out, no special case for a reminder wanting full attention.
+func TestTheCurveIsStretchedOntoTheRange(t *testing.T) {
 	c := candidate("r", 50, 24*time.Hour)
 	c.Advised = true
-	c.Slots = []store.Slot{{Day: 1, Start: 20 * 60, End: 23 * 60}}
+	c.Curve = flat(0)
+	c.Curve[2][20] = 0.5 // Wednesday 10:00
+	c.Curve[2][42] = 1.0 // Wednesday 21:00
 
 	for _, tc := range []struct {
 		name string
 		at   Moment
 		want float64
 	}{
-		{"inside", Moment{Day: 1, Minute: 21 * 60}, InSlot},
-		{"at the start", Moment{Day: 1, Minute: 20 * 60}, InSlot},
-		{"at the end is outside", Moment{Day: 1, Minute: 23 * 60}, OutOfSlot},
-		{"an hour early", Moment{Day: 1, Minute: 19 * 60}, OutOfSlot},
-		{"the wrong day", Moment{Day: 2, Minute: 21 * 60}, OutOfSlot},
+		{"the half hour it likes most", at(2, 21*60), Ceiling},
+		{"one it has no opinion about", at(2, 10*60), 1},
+		{"one it likes least", at(2, 3*60), Floor},
+		{"the same hour on another day", at(5, 21*60), Floor},
 	} {
 		if got := Advice(c, tc.at); got != tc.want {
 			t.Errorf("Advice(%s) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 
-	// Something wanting full attention is damped harder out of hours. A show suggested at a
-	// bad moment is ignored for free; an hour of concentration is the notification people
-	// turn off.
-	c.Exclusive = true
-	if got := Advice(c, Moment{Day: 2, Minute: 21 * 60}); got != OutOfSlotExclusive {
-		t.Errorf("Advice(exclusive, out of hours) = %v, want %v", got, OutOfSlotExclusive)
+	// Exactly 1 in the middle is what makes a companion with no opinion cost nothing.
+	flatC := candidate("r", 50, 24*time.Hour)
+	flatC.Advised = true
+	flatC.Curve = flat(0.5)
+	if got := Advice(flatC, at(3, 9*60)); got != 1 {
+		t.Errorf("Advice(a flat 0.5) = %v, want exactly 1", got)
 	}
 }
 
-// The companion moves a reminder around the week. It does not get to remove one — silencing is
-// a person's decision and has exactly one expression, priority zero.
+// A model asked for 0 to 1 answers inside it nearly always. A stray value read literally would
+// hand one reminder a multiplier no honest answer can reach — or, worse, a negative weight.
+func TestAValueOutsideTheScaleIsClamped(t *testing.T) {
+	c := candidate("r", 50, 24*time.Hour)
+	c.Advised = true
+	c.Curve = flat(0)
+	c.Curve[0][0] = 4.2
+	c.Curve[0][2] = -3
+
+	if got := Advice(c, at(0, 0)); got != Ceiling {
+		t.Errorf("Advice(above the scale) = %v, want %v", got, Ceiling)
+	}
+	if got := Advice(c, at(0, 60)); got != Floor {
+		t.Errorf("Advice(below the scale) = %v, want %v", got, Floor)
+	}
+}
+
+// The floor is a guarantee rather than a rounding: the companion moves a reminder around the
+// day and does not get to remove one. Silencing is a person's decision, priority zero.
 func TestAdviceCanNeverSilenceAReminder(t *testing.T) {
 	now := time.Now()
 	c := candidate("r", 50, 24*time.Hour)
 	c.Advised = true
-	c.Exclusive = true
-	c.Slots = nil // asked, and no hour suits it
+	c.Curve = flat(0)
 
-	if got := Weight(c, now, Moment{Day: 3, Minute: 9 * 60}); got <= 0 {
+	if got := Weight(c, now, at(0, 3*60)); got <= 0 {
 		t.Errorf("Weight() with the worst possible advice = %v, want something above zero", got)
 	}
-
-	// And it is still drawn when it is all there is.
-	if _, ok := Pick([]store.Candidate{c}, now, Moment{Day: 3, Minute: 9 * 60}, "", "seed"); !ok {
+	if Floor <= 0 {
+		t.Errorf("Floor = %v, which lets a curve of zeroes silence a reminder", Floor)
+	}
+	if _, ok := Pick([]store.Candidate{c}, now, at(0, 3*60), "", "seed"); !ok {
 		t.Error("Pick() found nothing, so advice silenced the only reminder there was")
 	}
 }
 
 // The first arrival is the one most worth placing well, so the never-nudged shortcut must not
 // step around the multiplier.
-func TestANeverNudgedReminderStillObeysItsHours(t *testing.T) {
+func TestANeverNudgedReminderStillObeysItsCurve(t *testing.T) {
 	now := time.Now()
 	c := candidate("r_new", 50, 0)
 	c.Advised = true
-	c.Slots = []store.Slot{{Day: 0, Start: 9 * 60, End: 17 * 60}}
-
-	in := Weight(c, now, Moment{Day: 0, Minute: 10 * 60})
-	out := Weight(c, now, Moment{Day: 4, Minute: 10 * 60})
-	if in <= out {
-		t.Errorf("in hours = %v, out of hours = %v, want the first larger", in, out)
+	c.Curve = flat(0)
+	for i := 18; i < 34; i++ {
+		c.Curve[1][i] = 1 // Tuesday, 09:00 to 17:00
 	}
-	if want := 50 * StalenessCap * InSlot; in != want {
-		t.Errorf("Weight() in hours = %v, want %v", in, want)
+
+	in := Weight(c, now, at(1, 10*60))
+	out := Weight(c, now, at(1, 4*60))
+	if in <= out {
+		t.Errorf("in its hours = %v, outside them = %v, want the first larger", in, out)
+	}
+	if want := 50 * StalenessCap * Ceiling; in != want {
+		t.Errorf("Weight() in its hours = %v, want %v", in, want)
 	}
 }
 
-// Advice bends the draw without deciding it. Over many seeds the reminder in its hours has to
-// win most of the time and lose some of it — a rule would do neither.
+// Advice bends the draw without deciding it. Over many seeds the reminder the companion likes
+// has to win most of the time and lose some of it — a rule would do neither.
 func TestAdviceShiftsTheDrawWithoutDecidingIt(t *testing.T) {
 	now := time.Now()
-	at := Moment{Day: 1, Minute: 21 * 60}
+	evening := at(3, 21*60)
 
-	inHours := candidate("r_in", 50, 24*time.Hour)
-	inHours.Advised = true
-	inHours.Slots = []store.Slot{{Day: 1, Start: 20 * 60, End: 23 * 60}}
+	liked := candidate("r_liked", 50, 24*time.Hour)
+	liked.Advised = true
+	liked.Curve = flat(1)
 
-	outOfHours := candidate("r_out", 50, 24*time.Hour)
-	outOfHours.Advised = true
-	outOfHours.Slots = []store.Slot{{Day: 4, Start: 9 * 60, End: 12 * 60}}
+	disliked := candidate("r_disliked", 50, 24*time.Hour)
+	disliked.Advised = true
+	disliked.Curve = flat(0)
 
-	pool := []store.Candidate{inHours, outOfHours}
+	pool := []store.Candidate{liked, disliked}
 	var won int
 	const runs = 400
 	for i := range runs {
-		got, ok := Pick(pool, now, at, "", fmt.Sprintf("seed-%d", i))
+		got, ok := Pick(pool, now, evening, "", fmt.Sprintf("seed-%d", i))
 		if !ok {
 			t.Fatal("Pick() found nothing")
 		}
-		if got.ID == "r_in" {
+		if got.ID == "r_liked" {
 			won++
 		}
 	}
-	// 3.0 against 0.6 is five to one, so about 83%. The bounds are wide enough not to be a
-	// test of the random number generator and tight enough to fail if the multiplier stopped
-	// being applied at all.
-	if won < runs*7/10 || won > runs*95/100 {
-		t.Errorf("the reminder in its hours won %d of %d, want a strong but not total majority", won, runs)
+	// 1.5 against 0.5 is three to one, so about 75%. Wide enough not to be a test of the random
+	// number generator, tight enough to fail if the multiplier stopped being applied.
+	if won < runs*6/10 || won > runs*9/10 {
+		t.Errorf("the liked reminder won %d of %d, want a majority rather than every draw", won, runs)
 	}
 }
