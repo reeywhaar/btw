@@ -161,6 +161,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/admin/proxy", s.requireAdmin(s.deleteProxy))
 	mux.Handle("POST /api/admin/proxy/test", s.requireAdmin(s.testProxy))
 
+	mux.Handle("GET /api/admin/companion", s.requireAdmin(s.getDefaultModel))
+	mux.Handle("PUT /api/admin/companion", s.requireAdmin(s.putDefaultModel))
+
 	mux.Handle("GET /api/admin/relay", s.requireAdmin(s.getRelay))
 	mux.Handle("PUT /api/admin/relay", s.requireAdmin(s.putRelay))
 	mux.Handle("DELETE /api/admin/relay", s.requireAdmin(s.deleteRelay))

@@ -39,9 +39,8 @@ func companionJSON(set openrouter.Settings) map[string]any {
 		"model":      set.Model,
 		"key_set":    set.APIKey != "",
 		"about":      set.About,
-		// So the form can offer the default as a placeholder rather than hard-coding a model
-		// name in two languages, where the two would drift.
-		"default_model": openrouter.DefaultModel,
+		// The instance's, so the placeholder names the model a blank field would actually ask.
+		"default_model": set.ModelOrDefault(),
 		"about_limit":   store.AboutLimit,
 	}
 }
@@ -315,7 +314,7 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		set.Model = stored.Model
 	}
 	if set.Model == "" {
-		set.Model = openrouter.DefaultModel
+		set.Model = stored.ModelOrDefault()
 	}
 
 	if !set.Configured() {
@@ -346,4 +345,38 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		"model":  res.Model,
 		"tokens": res.Tokens,
 	})
+}
+
+func (s *Server) getDefaultModel(w http.ResponseWriter, r *http.Request) {
+	model, err := s.store.DefaultModel(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"model": model,
+		// What a blank field falls through to, so the form can offer it as a placeholder.
+		"fallback_model": openrouter.DefaultModel,
+		"model_limit":    store.ModelLimit,
+	})
+}
+
+// putDefaultModel sets the model every account that never chose one follows.
+//
+// Not checked against OpenRouter, and it could not be: the instance has no key of its own, and
+// the only thing that settles whether a slug works is an account using it. A wrong one is
+// reported by the first companion that tries it.
+func (s *Server) putDefaultModel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := s.store.SetDefaultModel(r.Context(), req.Model); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("default model set", "model", req.Model, "by", principal(r).Username)
+	s.getDefaultModel(w, r)
 }

@@ -71,3 +71,20 @@ export const deleteAdminProxy = () =>
 
 export const postAdminProxyTest = () =>
   request<ProxyTest>("/api/admin/proxy/test", { method: "POST", body: {} });
+
+/** The model every account that never chose one follows. */
+export type DefaultModel = {
+  model: string;
+  /** What a blank falls through to, so the form need not name a model of its own. */
+  fallback_model: string;
+  model_limit: number;
+};
+
+export const getAdminDefaultModel = () =>
+  request<DefaultModel>("/api/admin/companion");
+
+export const putAdminDefaultModel = (model: string) =>
+  request<DefaultModel>("/api/admin/companion", {
+    method: "PUT",
+    body: { model },
+  });

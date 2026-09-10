@@ -15,17 +15,28 @@ import (
 // refused at the form rather than found on an invoice.
 const AboutLimit = 2000
 
+// ModelLimit bounds a model slug: long enough for any OpenRouter name, short enough that the
+// field cannot be used as storage.
+const ModelLimit = 200
+
 // Companion reads the model an account configured, or the zero value if there is none.
 //
 // A missing row is not an error. "No companion" is a state the interface renders — it is why
 // nothing is being weighed — rather than a failure of the read.
 func (s *Store) Companion(ctx context.Context, principalID string) (openrouter.Settings, error) {
-	var set openrouter.Settings
-	err := s.main.QueryRowContext(ctx,
+	// Read here rather than left to the caller, since a caller that forgets asks a model
+	// nobody chose.
+	fallback, err := s.DefaultModel(ctx)
+	if err != nil {
+		return openrouter.Settings{}, err
+	}
+
+	set := openrouter.Settings{Default: fallback}
+	err = s.main.QueryRowContext(ctx,
 		`SELECT api_key, model, about FROM companion WHERE principal_id = ?`, principalID).
 		Scan(&set.APIKey, &set.Model, &set.About)
 	if errors.Is(err, sql.ErrNoRows) {
-		return openrouter.Settings{}, nil
+		return openrouter.Settings{Default: fallback}, nil
 	}
 	if err != nil {
 		return openrouter.Settings{}, fmt.Errorf("read companion: %w", err)
@@ -41,6 +52,9 @@ func (s *Store) SetCompanion(ctx context.Context, principalID string, set openro
 
 	if set.APIKey == "" {
 		return Invalid("a companion needs a key")
+	}
+	if len([]rune(set.Model)) > ModelLimit {
+		return Invalid("that is more than %d characters for a model", ModelLimit)
 	}
 	if len([]rune(set.About)) > AboutLimit {
 		// Runes, because the limit is on what somebody wrote and not on how it encodes. A
@@ -99,4 +113,38 @@ func (s *Store) PrincipalsWithCompanion(ctx context.Context) ([]string, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// DefaultModel is the model an account with no choice of its own follows, or empty for the one
+// compiled in.
+//
+// An administrator's, and instance-wide: OpenRouter retires slugs, and without this every
+// account that never chose one breaks at the same moment with no way back but a redeploy.
+func (s *Store) DefaultModel(ctx context.Context) (string, error) {
+	var model string
+	err := s.main.QueryRowContext(ctx,
+		`SELECT model FROM companion_default WHERE singleton = 1`).Scan(&model)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read the default model: %w", err)
+	}
+	return model, nil
+}
+
+// SetDefaultModel replaces it. Empty is how it is cleared, which puts the compiled-in one back.
+func (s *Store) SetDefaultModel(ctx context.Context, model string) error {
+	model = strings.TrimSpace(model)
+	if len([]rune(model)) > ModelLimit {
+		return Invalid("that is more than %d characters for a model", ModelLimit)
+	}
+	_, err := s.main.ExecContext(ctx,
+		`INSERT INTO companion_default (singleton, model, updated_at) VALUES (1, ?, ?)
+		 ON CONFLICT (singleton) DO UPDATE SET model = excluded.model, updated_at = excluded.updated_at`,
+		model, unix(s.Now()))
+	if err != nil {
+		return fmt.Errorf("set the default model: %w", err)
+	}
+	return nil
 }

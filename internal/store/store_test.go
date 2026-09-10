@@ -1292,3 +1292,48 @@ func TestSomethingTakenBackOutOfTheBinIsWhereItWas(t *testing.T) {
 		t.Errorf("candidates = %+v, want it back in the running", got)
 	}
 }
+
+// OpenRouter retires slugs. Without an instance default, the day the compiled-in one goes,
+// every account that never chose a model breaks at once and the fix is a new build.
+func TestAnUnchosenModelFollowsTheInstanceDefault(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"}); err != nil {
+		t.Fatalf("SetCompanion(): %v", err)
+	}
+	if got, _ := s.Companion(ctx, p.ID); got.ModelOrDefault() != openrouter.DefaultModel {
+		t.Errorf("ModelOrDefault() = %q, want the compiled-in one", got.ModelOrDefault())
+	}
+
+	if err := s.SetDefaultModel(ctx, "anthropic/claude-sonnet-5"); err != nil {
+		t.Fatalf("SetDefaultModel(): %v", err)
+	}
+	got, err := s.Companion(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if got.Model != "" {
+		t.Errorf("Model = %q, want the account's own choice still unmade", got.Model)
+	}
+	if got.ModelOrDefault() != "anthropic/claude-sonnet-5" {
+		t.Errorf("ModelOrDefault() = %q, want the instance's", got.ModelOrDefault())
+	}
+
+	// A model somebody typed outranks it, which is what makes this a default and not a policy.
+	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", Model: "openai/gpt-5"}); err != nil {
+		t.Fatalf("SetCompanion(chosen): %v", err)
+	}
+	if got, _ := s.Companion(ctx, p.ID); got.ModelOrDefault() != "openai/gpt-5" {
+		t.Errorf("ModelOrDefault() = %q, want the one that was typed", got.ModelOrDefault())
+	}
+
+	// Cleared, rather than deleted, and the compiled-in one comes back.
+	if err := s.SetDefaultModel(ctx, ""); err != nil {
+		t.Fatalf("SetDefaultModel(empty): %v", err)
+	}
+	if m, _ := s.DefaultModel(ctx); m != "" {
+		t.Errorf("DefaultModel() = %q, want it cleared", m)
+	}
+}

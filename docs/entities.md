@@ -211,8 +211,23 @@ then names the model it will be asked with. It costs the difference between havi
 not. An account is pinned to whichever default it first met, and the form comes back holding a
 model name where somebody left a blank — so their next save picks it on their behalf.
 
-The fallback is resolved at the moment of asking, by `Settings.ModelOrDefault`. A model somebody
-did type is kept whether or not it equals the default, because typing it is a choice.
+The fallback is resolved at the moment of asking, by `Settings.ModelOrDefault`, which prefers
+what was typed, then `companion_default`, then the constant. A model somebody did type is kept
+whether or not it equals the default, because typing it is a choice. It is bounded at 200 runes,
+so the column cannot be used as storage.
+
+### `companion_default`
+
+```
+singleton, model, updated_at
+```
+
+The model an account with no choice of its own follows. A singleton, and an administrator's —
+this one *is* the instance's, unlike the key above it.
+
+It exists because OpenRouter retires slugs. A compile-time constant cannot survive that: every
+account that never chose would break at the same moment, with no way back but a redeploy. Empty
+means the constant, which is also what an instance that has never touched it gets.
 
 `about` is bounded at 2,000 runes, counted in runes rather than bytes because a paragraph is
 not four times as long for being written in a four-byte script. The bound is a token bill as

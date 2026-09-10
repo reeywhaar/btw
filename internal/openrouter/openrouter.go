@@ -22,9 +22,10 @@ import (
 
 const Endpoint = "https://openrouter.ai/api/v1/chat/completions"
 
-// DefaultModel is what an account gets without naming one. Free, so this can be tried without a
-// balance. The `:free` variants accept far fewer parameters than the paid slug of the same
-// model — no `structured_outputs` — so anything wanting a strict schema has to check.
+// DefaultModel is the fallback under an instance's own, which is what an account gets when
+// neither has been set. Free, so this can be tried without a balance. The `:free` variants
+// accept far fewer parameters than the paid slug of the same model — no `structured_outputs` —
+// so anything wanting a strict schema has to check.
 const DefaultModel = "minimax/minimax-m3:free"
 
 // ErrRateLimited is the one refusal that passes on its own. A sentinel, because a loop that
@@ -55,6 +56,10 @@ type Settings struct {
 	// today's default, so it is resolved at the moment of asking instead.
 	Model string
 
+	// Default is the instance's model, which an administrator sets and an unchosen Model
+	// follows. Empty falls through to [DefaultModel].
+	Default string
+
 	// About is what the model is told about the person, in their own words — the whole reason a
 	// companion can say anything useful. A rhythm's waking window says which hours are allowed,
 	// never which are wanted.
@@ -62,10 +67,12 @@ type Settings struct {
 }
 
 func (s Settings) ModelOrDefault() string {
-	if s.Model == "" {
-		return DefaultModel
+	for _, m := range []string{s.Model, s.Default, DefaultModel} {
+		if m != "" {
+			return m
+		}
 	}
-	return s.Model
+	return DefaultModel
 }
 
 // Configured is the key alone: a key without an About still answers, worse than it would with

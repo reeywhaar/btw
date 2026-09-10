@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getAuthMe } from "@app/api/actions/auth";
 import { qk } from "@app/api/keys";
 import { ApiError } from "@app/api/transport";
+import { Companion } from "@app/islands/admin/Companion";
 import { Proxy } from "@app/islands/admin/Proxy";
 import { Relay } from "@app/islands/admin/Relay";
 
@@ -51,6 +52,7 @@ export function Admin() {
           <main className="space-y-8 px-4">
             <Relay />
             <Proxy />
+            <Companion />
           </main>
         )}
       </div>

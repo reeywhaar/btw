@@ -521,6 +521,8 @@ func TestAdminRoutesAreForAdministrators(t *testing.T) {
 		{"PATCH", "/api/admin/proxy"},
 		{"DELETE", "/api/admin/proxy"},
 		{"POST", "/api/admin/proxy/test"},
+		{"GET", "/api/admin/companion"},
+		{"PUT", "/api/admin/companion"},
 	} {
 		var body any
 		if tc.method == "PUT" || tc.method == "POST" || tc.method == "PATCH" {
@@ -1466,5 +1468,31 @@ func TestEmptyingTheBinTakesOnlyWhatIsInIt(t *testing.T) {
 	}
 	if binned, _ := h.store.Reminders(h.Context(), theirs.ID, true); len(binned) != 1 {
 		t.Error("emptying one bin reached another account's")
+	}
+}
+
+// The placeholder on somebody's own settings has to name the model a blank field would ask,
+// or it offers one model and the loop uses another.
+func TestTheDefaultModelIsAnAdministratorsAndReachesTheAccountForm(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("boss", store.RoleAdmin)
+
+	resp := h.do("PUT", "/api/admin/companion", map[string]any{"model": "anthropic/claude-sonnet-5"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /api/admin/companion = %s", resp.Status)
+	}
+
+	h.signInAs("ordinary", store.RoleUser)
+	var body struct {
+		Model        string `json:"model"`
+		DefaultModel string `json:"default_model"`
+	}
+	decodeBody(t, h.do("GET", "/api/companion", nil), &body)
+	if body.Model != "" {
+		t.Errorf("model = %q, want nothing chosen", body.Model)
+	}
+	if body.DefaultModel != "anthropic/claude-sonnet-5" {
+		t.Errorf("default_model = %q, want the administrator's", body.DefaultModel)
 	}
 }

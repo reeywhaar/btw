@@ -231,6 +231,8 @@ PUT    /api/admin/proxy                  {kind, url, username, token} → the ab
 PATCH  /api/admin/proxy                  {enabled} → the above
 DELETE /api/admin/proxy                  → 204
 POST   /api/admin/proxy/test             {} → {reached, took_ms}
+GET    /api/admin/companion              {model, fallback_model, model_limit}
+PUT    /api/admin/companion              {model} → the above
 ```
 
 An administrator's, unlike the companion below it: how this machine reaches the internet is one
@@ -288,8 +290,13 @@ form needs, and saving with an empty `api_key` keeps the stored one — which is
 somebody change their model without retyping a credential the form was never given. `about`
 does come back, because it is a text field somebody edits.
 
-`default_model` is sent so the form can offer it as a placeholder rather than hard-coding a
-model name in two languages, where the two would drift.
+`default_model` is the model a blank field would actually ask — an administrator's
+`/api/admin/companion` when one is set, and the compiled-in one otherwise — so the placeholder
+cannot offer one model while the loop uses another.
+
+`PUT /api/admin/companion` is not checked against OpenRouter and could not be: the instance has
+no key of its own. An empty `model` clears it. It exists because slugs are retired, and without
+it the day the compiled-in model goes every account that never chose one breaks at once.
 
 `advice` is `{status, advised_at, attempted_at, error, stale}`, and is **absent until a key is
 configured** — reporting on a loop that never runs would be reporting on nothing. `status` is
