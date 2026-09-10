@@ -145,9 +145,9 @@ DELETE /api/reminders/{id}               → 204
 **`POST` takes one field.** Typing a sentence is the entire path to a reminder existing;
 everything else has a default that is deliberately invisible.
 
-**The bin has a route of its own**, below, rather than `?binned=true` on this one. It was a
-parameter while the second thing was "finished reminders" — a slice of the same collection —
-and stopped being one when the bin became a place with its own life and its own sweep.
+**The bin has a route of its own**, below, rather than `?binned=true` on this one. A parameter
+says "the same collection, different rows", and the bin is a place: its own screen, its own
+life, its own sweep.
 
 `PATCH` takes pointers, so **absent leaves a field alone and empty clears it** — which is how
 a description is deleted without also retyping the sentence. It changes wording only: ending a

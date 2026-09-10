@@ -134,8 +134,7 @@ func TestInviteIsSingleUse(t *testing.T) {
 	}
 }
 
-// withFloor states a floor on a reminder, which is now the only way one exists — reminders
-// no longer inherit a day's floor nobody asked for.
+// withFloor states a floor on a reminder, which is the only way one exists.
 func withFloor(t *testing.T, s *Store, id string, d time.Duration) {
 	t.Helper()
 	if _, err := s.main.Exec(`UPDATE reminders SET min_interval = ? WHERE id = ?`,
@@ -642,9 +641,8 @@ func TestABudgetIsBoundedOnlyByTheCeiling(t *testing.T) {
 		t.Errorf("Budget = %d, want the default %d", r.Budget, DefaultBudget)
 	}
 
-	// Nothing about the window bounds it any more: the interval is the waking day over the
-	// budget and is floored at one tick, so there is no second ceiling to keep in agreement
-	// with a planner that no longer exists.
+	// Nothing about the window bounds it: the interval is the waking day over the budget,
+	// floored at one tick.
 	r.Budget = MaxBudget
 	if err := s.SetRhythm(ctx, r); err != nil {
 		t.Fatalf("SetRhythm(%d): %v", MaxBudget, err)
@@ -676,11 +674,9 @@ func TestACompanionNeedsAKey(t *testing.T) {
 	}
 }
 
-// "I have not chosen a model" and "I chose minimax/minimax-m3:free" are different answers, and
-// storing the default made them the same row. Two things went wrong with that: an account was
-// pinned to whatever the default was on the day it first saved, and the form came back with a
-// model name where somebody had left a blank — so the next save picked, on their behalf,
-// something they never typed.
+// "I have not chosen" and "I chose minimax/minimax-m3:free" are different answers. Storing the
+// default makes them one row, which pins an account to whatever the default was on the day it
+// first saved.
 func TestAModelNobodyChoseStaysUnchosen(t *testing.T) {
 	s := testStore(t)
 	p := testPrincipal(t, s)
@@ -775,7 +771,6 @@ func TestOneAccountsCompanionIsNotAnothers(t *testing.T) {
 	}
 }
 
-// A missing row is a state the interface renders, not a failure of the read.
 func TestNoCompanionIsNotAnError(t *testing.T) {
 	s := testStore(t)
 	p := testPrincipal(t, s)
@@ -1202,8 +1197,6 @@ func TestMidnightIsStoredAsOneHourNotTwo(t *testing.T) {
 	}
 }
 
-// The refusal that used to stand — "for now the waking window has to start and end on the same
-// day" — is gone, and a night owl's hours have to save.
 func TestANightOwlsHoursAreAccepted(t *testing.T) {
 	s := testStore(t)
 	p := testPrincipal(t, s)
@@ -1274,8 +1267,7 @@ func TestTheBinEmptiesItselfAfterThirtyDays(t *testing.T) {
 	}
 }
 
-// Binning is not finishing. Taking something back out has to leave it exactly as it was, since
-// the press it undoes is one somebody made by mistake.
+// The press it undoes is one somebody made by mistake, so it has to leave the row as it was.
 func TestSomethingTakenBackOutOfTheBinIsWhereItWas(t *testing.T) {
 	s := testStore(t)
 	p := testPrincipal(t, s)

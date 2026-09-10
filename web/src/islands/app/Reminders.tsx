@@ -103,16 +103,10 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
   const client = useQueryClient();
 
-  // Binning leaves the row where it is, greyed, with a way back — rather than making it
-  // vanish under the finger that pressed it.
-  //
-  // The row is marked in the cache rather than kept in a list of its own, because a reminder
-  // already carries `binned_at` and the server has just set it. Nothing here invents a state:
-  // the row is showing what is true, a moment before the list is asked again.
-  //
-  // It lasts until the list is refetched — a reload, or writing something else down. That is
-  // the right length: undo is for the press that was a mistake, and a mistake is noticed
-  // immediately or not at all.
+  // Binning greys the row where it is rather than making it vanish under the finger that
+  // pressed it. Marked in the cache, since the reminder already carries `binned_at` and the
+  // server has just set it, and it lasts until the next refetch — undo is for a press that was
+  // a mistake, and a mistake is noticed immediately or not at all.
   const mark = (at: number | null) =>
     client.setQueryData<{ reminders: Reminder[] }>(qk.reminders, (old) =>
       old
@@ -207,11 +201,9 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
 }
 
 /**
- * Editing what a reminder says.
- *
- * Binning it is not in here. The bin sits on the row and on the notification, and folding it
- * into a save dialog would make "fix this wording" and "I am finished with this" the same
- * gesture behind the same button.
+ * Editing what a reminder says. Binning is not in here: it sits on the row and on the
+ * notification, and folding it in would put "fix this wording" and "I am done with this" behind
+ * one button.
  */
 function EditDialog({
   open,
@@ -297,12 +289,8 @@ function EditDialog({
 }
 
 /**
- * The bin, as a place somebody goes rather than a list unfolding under the one they were
- * reading.
- *
- * It was inline and that was wrong in a small way that adds up: opening it pushed nothing, but
- * it put a second list of things somebody has finished with directly beneath the list of things
- * they have not. A dialog is a room you leave.
+ * The bin, as a place somebody goes: unfolding it in place would put a list of things they have
+ * finished with directly beneath the list of things they have not. A dialog is a room you leave.
  */
 function BinDialog({
   open,

@@ -10,20 +10,9 @@ import (
 
 // A span is one stretch of the week the companion has an opinion about.
 //
-// This is the shape the question actually asks for, and the array of numbers it replaced is
-// kept only as a fallback. The reason is not taste, it is what a model can do reliably:
-//
-//   - **Nothing to count.** Seven days of forty-eight was asked for and answered as 7×49, 7×24
-//     and an object keyed by day, on consecutive attempts. A span names its own hours, so
-//     there is no position to lose track of and no length to get wrong.
-//   - **Saying nothing costs nothing.** With 336 numbers the lazy answer and the considered one
-//     cost the same, so a model under pressure emits 0.5 three hundred and thirty-six times and
-//     produces something data-shaped that says nothing. Here an opinion is one line and no
-//     opinion is no lines.
-//   - **Arbitrary edges.** Fixed buckets could not say "the middle of the morning to the middle
-//     of the day". A span says 10:00 to 13:00.
-//
-// Everything downstream still reads a 7×48 [store.Curve]; spans are expanded into one here.
+// A span names its own hours, so there is nothing to count; it is sparse, so an opinion is a
+// line; and its edges are its own, which fixed buckets cannot manage. Everything downstream
+// reads a 7×48 [store.Curve], so spans are expanded into one here.
 type span struct {
 	Days string
 	From string

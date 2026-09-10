@@ -299,10 +299,8 @@ func open(t *testing.T, body, uaPrivateRaw, uaPublicRaw, authSecret []byte) ([]b
 	return bytes.TrimRight(record, "\x02"), nil
 }
 
-// Two streams, and the topic is what keeps them apart at the push service. A push service
-// discards an undelivered message when a later one shares its topic, so an alert sent under
-// the nudges' topic would replace a nudge waiting for a phone that has been off — and the
-// person, sent both, would receive one.
+// A push service discards an undelivered message when a later one shares its topic, so an alert
+// under the nudges' topic would replace a nudge waiting for a phone that has been off.
 func TestAlertsTravelOnTheirOwnTopic(t *testing.T) {
 	if Alerts.Topic == Nudges.Topic {
 		t.Fatal("alerts share the nudges' topic, so a push service will collapse the two")

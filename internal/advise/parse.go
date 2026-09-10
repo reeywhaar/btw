@@ -43,18 +43,12 @@ func soft[T any](raw json.RawMessage) T {
 
 // parse reads what the companion said, keeping what is usable and discarding the rest.
 //
-// Lenient throughout, and it has to be: this is a free model answering in JSON mode, which is a
-// request rather than a guarantee. The alternative — refusing the whole answer over one bad
-// entry — would throw away nineteen good ones and leave the account no better off than before
-// it configured a key.
+// Lenient throughout, because JSON mode is a request rather than a guarantee and refusing the
+// whole answer over one bad entry throws away nineteen good ones. `known` bounds it: an id
+// outside the set that was asked about is dropped.
 //
-// Nothing here can invent a reminder. `known` is the set that was asked about, and an id
-// outside it is dropped: a model that echoes an id back wrongly, or helpfully makes one up,
-// must not be able to attach advice to somebody else's row.
-//
-// The second return is how many entries were thrown away, and the third the shapes of the
-// curves that could not be read — "7x24", "336" — so a pass can say what went wrong without
-// saying anything about somebody's reminders.
+// Returns how many entries were thrown away, and the shapes that could not be read — "7x24",
+// "336" — so a pass can say what went wrong without naming anybody's reminders.
 func parse(reply string, known map[string]bool) (map[string]store.Advice, int, []string) {
 	out := make(map[string]store.Advice)
 
@@ -99,29 +93,15 @@ func parse(reply string, known map[string]bool) (map[string]store.Advice, int, [
 	return out, dropped, misshapen
 }
 
-// reshape reads a curve out of whatever a model actually sent, and names the shape when it
-// cannot.
+// reshape reads a curve out of whatever a model sent, and names the shape when it cannot.
 //
-// **Only readings that are unambiguous.** A model asked for seven arrays of forty-eight
-// reliably sends something else, and most of those somethings mean exactly one thing:
+// Only unambiguous readings: 7×48, a flat 336, 7×24 by the hour, one day of 48 or 24, an object
+// keyed by day name, and numbers written as strings. Each is expanded rather than guessed at —
+// an hourly value covers both its half hours, one day covers all seven — so nothing invents a
+// number that was not sent.
 //
-//   - 7×48, as asked.
-//   - an object keyed by day name, which is what "one for each day of the week" invites and
-//     is arguably a better answer than the one asked for.
-//   - 336 in a flat list, which is the same numbers in the same order.
-//   - 7×24, which is the week by the hour — every model's favourite substitution.
-//   - one day of 48 or 24, which the prompt itself says is right for a reminder that does not
-//     differ across the week.
-//
-// Numbers written as strings are read too. `"0.5"` is the same answer as `0.5` and refusing it
-// would be refusing on a technicality.
-//
-// Each of those is expanded rather than guessed at: an hourly value covers both of its half
-// hours, and one day covers all seven. Nothing invents a number that was not sent.
-//
-// What is still refused is anything ragged — six days, or seven with one short. There the
-// values after the mistake belong to hours nobody can identify, and a curve confidently wrong
-// about which hour is which is worse than no curve at all.
+// Ragged is refused. Six days, or seven with one short, puts every value after the mistake on an
+// hour nobody can identify, and a curve confidently wrong about which is worse than none.
 func reshape(raw json.RawMessage) (store.Curve, string) {
 	// What the question now asks for. Everything below it is a fallback for a model that
 	// answered the question it expected rather than the one it was given — which they do, and
@@ -313,15 +293,9 @@ func fromDays(days [][]float64) (store.Curve, string) {
 				hours[2*i], hours[2*i+1] = v, v
 			}
 		case abs(len(day)-store.Windows) == 1, abs(len(day)-store.Windows/2) == 1:
-			// One out, which is the mistake a model actually makes — 49 values for a day, or
-			// 23. Trimmed or held rather than refused, and the reason is in what the answer
-			// claims to be: the question asks for broad stretches and says in as many words
-			// that a curve swinging between neighbouring half hours is describing precision
-			// the model does not have. An answer whose neighbours are meant to be alike
-			// cannot be ruined by a half hour of misalignment.
-			//
-			// Strictly one. Two out is no longer a slip, and past that the values are landing
-			// on hours nobody can identify — which is the thing worth refusing.
+			// 49 for a day, or 23: the mistake a model actually makes. The question asks for
+			// broad stretches, so neighbours are meant to be alike and half an hour of
+			// misalignment cannot ruin the answer. Strictly one — two out is not a slip.
 			hours = fit(day)
 		default:
 			return nil, fmt.Sprintf("%dx%d", len(days), len(day))

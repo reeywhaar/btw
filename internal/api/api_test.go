@@ -1129,7 +1129,6 @@ func TestSavingAProxyWithoutATokenKeepsItOnlyForTheSameEndpoint(t *testing.T) {
 	}
 }
 
-// Off keeps everything, so switching back on is a press rather than typing a secret again.
 func TestAProxyIsSwitchedOffWithoutBeingForgotten(t *testing.T) {
 	h := newHarness(t)
 	h.signInAs("admin", store.RoleAdmin)
@@ -1236,8 +1235,6 @@ func TestTheAdviceScreenShowsWhatTheWeightingReads(t *testing.T) {
 	}
 }
 
-// The press waits and comes back with the answer. It used to hand the work to the loop and
-// return before anything had happened, which made somebody judge a change they could not see.
 func TestAskingAgainWaitsAndAnswersWithTheAdvice(t *testing.T) {
 	h := newHarness(t)
 	p := h.signIn()
@@ -1290,7 +1287,6 @@ func TestAskingAgainHasACeiling(t *testing.T) {
 	}
 }
 
-// What went wrong reaches the screen, rather than a silent nothing after a long wait.
 func TestAFailedAskSaysWhyRatherThanAnsweringEmpty(t *testing.T) {
 	h := newHarness(t)
 	h.signIn()
@@ -1310,9 +1306,8 @@ func TestAFailedAskSaysWhyRatherThanAnsweringEmpty(t *testing.T) {
 	}
 }
 
-// The settings block said "it has an opinion about all your reminders" over a list where every
-// one of them said the opposite. Coverage counted entries the companion answered for; the rows
-// counted curves the weighting can actually read, and an unreadable curve is one it ignores.
+// Coverage has to count what the weighting can read, not what the companion answered for.
+// Otherwise the block claims an opinion about a list where every row says the opposite.
 func TestCoverageCountsAdviceTheWeightingCanActuallyUse(t *testing.T) {
 	h := newHarness(t)
 	p := h.signIn()
@@ -1368,8 +1363,6 @@ func aWeek() store.Curve {
 	return c
 }
 
-// The refusal that used to stand — "for now the waking window has to start and end on the same
-// day" — is gone. Somebody awake from noon until four keeps the hours they actually keep.
 func TestAWakingWindowMaySpanMidnight(t *testing.T) {
 	h := newHarness(t)
 	p := h.signIn()
@@ -1395,7 +1388,7 @@ func TestAWakingWindowMaySpanMidnight(t *testing.T) {
 	}
 }
 
-// An hour outside a day is still a mistake, which is the bound the old CHECK was really for.
+// An hour outside a day is still a mistake.
 func TestAnHourOutsideADayIsStillRefused(t *testing.T) {
 	h := newHarness(t)
 	h.signIn()
@@ -1412,8 +1405,7 @@ func TestAnHourOutsideADayIsStillRefused(t *testing.T) {
 	}
 }
 
-// The bin has a route rather than a parameter, because after it stopped being "finished
-// reminders" it stopped being a slice of the same collection.
+// A route rather than a parameter: the bin is not a slice of the list.
 func TestTheBinIsItsOwnPlace(t *testing.T) {
 	h := newHarness(t)
 	p := h.signIn()
@@ -1441,8 +1433,6 @@ func TestTheBinIsItsOwnPlace(t *testing.T) {
 	}
 }
 
-// Clean up reaches everything in one account's bin and nothing else — not the list, and not
-// somebody else's bin.
 func TestEmptyingTheBinTakesOnlyWhatIsInIt(t *testing.T) {
 	h := newHarness(t)
 	mine := h.signIn()

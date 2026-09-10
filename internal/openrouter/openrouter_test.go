@@ -12,16 +12,12 @@ import (
 	"btw/internal/proxy"
 )
 
-// serve points the package at a server started here, for the length of one test.
-//
-// A real conversation over a loopback socket rather than a mocked http.Client, on the same
-// argument internal/mail makes: a mock would assert that net/http was called, and what is
-// worth asserting is that the key travels as a bearer token, that a fault inside a 200 is
-// still a failure, and that the gateway's own words survive to the caller.
-// direct is no proxy at all, which is what every test here wants but the one about proxies:
-// naming it says these are about the gateway rather than about the way out.
+// direct is no proxy at all, which is what every test here wants but the one about proxies.
 var direct = proxy.Settings{}
 
+// serve points the package at a server started here, for the length of one test. A real
+// conversation over a loopback socket rather than a mocked http.Client, on the argument
+// internal/mail makes: a mock would assert that net/http was called.
 func serve(t *testing.T, h http.HandlerFunc) {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -77,9 +73,8 @@ func TestTheModelThatAnsweredIsReportedAndNotTheOneAskedFor(t *testing.T) {
 	}
 }
 
-// OpenRouter answers 200 with the fault in the body when a provider dies partway through, so
-// the status code alone is not the whole story. This is the case a resp.StatusCode check
-// would report as a success.
+// OpenRouter answers 200 with the fault in the body when a provider dies partway through, which
+// a resp.StatusCode check reports as a success.
 func TestAFaultInsideATwoHundredIsStillAFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -167,9 +162,8 @@ func TestThereIsNothingToCheckWithoutAKey(t *testing.T) {
 	}
 }
 
-// A quota is the one refusal here that will pass on its own, and a caller's response to it is
-// categorically different: it wants a wait, not a person. Asserted through the sentinel rather
-// than the wording, because the wording is the gateway's and will change.
+// A quota wants a wait, every other refusal wants a person. Asserted through the sentinel, since
+// the wording is the gateway's and will change.
 func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 	serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -197,9 +191,8 @@ func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 	}
 }
 
-// An account that never chose a model follows the default wherever it goes, and the resolving
-// happens here rather than in the row — so the question asked names a model even when nothing
-// was written down.
+// Resolved here rather than in the row, so an account that never chose follows the default
+// wherever it goes.
 func TestAnUnchosenModelIsResolvedWhenItIsAsked(t *testing.T) {
 	var asked string
 	serve(t, func(w http.ResponseWriter, r *http.Request) {

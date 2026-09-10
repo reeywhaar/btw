@@ -1,14 +1,9 @@
 @import "tailwindcss";
 
-/* Semantic tokens, not colours.
- *
- * Every component names what a colour is *for* — bg, fg, muted, line — and this file is
- * the only place that says what those are. That is what makes a second theme a dozen lines
- * here rather than a `dark:` variant on every className in the application, half of which
- * somebody would eventually forget.
- *
- * Light is the base and dark is the override, because a stylesheet has to pick one to be
- * the default and light is what a browser assumes when it is told nothing at all. */
+/* Semantic tokens, not colours: every component names what a colour is *for* and this file is
+ * the only place saying what those are, which makes a second theme a dozen lines here rather
+ * than a `dark:` variant on every className. Light is the base, since that is what a browser
+ * assumes when told nothing. */
 @theme {
   --color-bg: #fafaf9;
   --color-surface: #ffffff;
@@ -25,25 +20,16 @@
    * spending it on "this browser cannot receive nudges" would make it mean less where it
    * matters. 4.81:1 on the light ground, 9.16:1 on the dark one. */
   --color-warn: #b45309;
-  /* The third of a trio, and the only one that reports rather than warns. It exists because
-   * a state with two bad answers and no good one reads as broken whenever it is not — the
-   * companion working is a thing worth being able to see at a glance, not merely the absence
-   * of a triangle. Nothing acts on it and nothing is coloured by it but an icon.
+  /* The only one that reports rather than warns: a state with two bad answers and no good one
+   * reads as broken whenever it is not. Nothing but an icon is coloured by it.
    * 4.80:1 on the light ground, 11.3:1 on the dark one. */
   --color-ok: #15803d;
-  /* The ground a chart is drawn on, and the ink it is drawn with.
+  /* The ground a chart is drawn on and the ink it is drawn with — the only tokens here naming
+   * surfaces rather than roles. A drawing needs its own edges, or a shape at the left of a row
+   * and one running off it look the same. One hue for both: grey on grey reads as a screenshot
+   * of a chart, a warm pair reads as a chart.
    *
-   * The only tokens here that name surfaces rather than roles, and the only colour in the
-   * product that is a colour. A drawing needs its own edges: without them a shape sitting at
-   * the left of a row and one running off it look the same, and a flat day is
-   * indistinguishable from no day at all.
-   *
-   * One hue for both, sand for the ground and a deeper brown for the ink, because they are two
-   * parts of one drawing rather than two things that meet. Grey ink on a grey ground was the
-   * first version and read as a screenshot of a chart; a warm pair reads as a chart.
-   *
-   * 3.67:1 between the two on the light theme and 6.30:1 on the dark. Graphics need 3:1, not
-   * the 4.5:1 text does, and the ground carries no text — the day's name sits outside it. */
+   * 3.67:1 between the two on light, 6.30:1 on dark; graphics need 3:1, and no text sits on it. */
   --color-plot: #e7d8bf;
   --color-plot-ink: #7c6a5e;
 }
@@ -84,16 +70,11 @@ html {
   background: var(--color-bg);
 }
 
-/* One place, because every input in this application wants it. Anything under 16px makes
-   iOS Safari zoom the page on focus, and a page that jumps when you tap the one field it
-   has is a page nobody wants to type in twice. */
-/* iOS Safari zooms the page when a control smaller than 16px takes focus, and a page that
- * jumps when you tap the one field it has is a page nobody wants to type in twice.
+/* iOS Safari zooms the page when a control smaller than 16px takes focus, and a page that jumps
+ * when you tap its one field is a page nobody wants to type in twice.
  *
- * Only what can be *typed into or opened* triggers it. `button` was in this list, which
- * silently overrode `text-sm` on every button in the application — a 14px label and a 16px
- * one sitting side by side in the masthead is how it was noticed, but it was every button.
- * A rule this broad is not a safety net, it is an override nobody can see at the call site. */
+ * Only what can be typed into or opened. `button` does not belong here: a rule this broad is an
+ * override nobody can see at the call site, and it silently beats `text-sm` everywhere. */
 input,
 select,
 textarea {

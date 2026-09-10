@@ -9,16 +9,12 @@ import (
 	"btw/internal/store"
 )
 
-// The prompt is the product here, so it is written as prose in one block rather than
-// assembled out of string concatenation.
+// The prompt is the product here, so it is one block of prose rather than something assembled
+// by Fprintf: it reads as what the model reads, and a change to it is a diff somebody can judge
+// without running anything.
 //
-// Two consequences worth having. It reads as what the model reads, so a change to it is a
-// diff somebody can judge without running anything — and it is a constant, so `go doc` and a
-// grep both find the whole of it in one place. Building it with Fprintf hid the argument
-// inside the machinery, and the argument is the part that matters.
-//
-// text/template, never html/template: this is prose going to a model, and HTML escaping would
-// silently turn an apostrophe in somebody's description of themselves into `&#39;`.
+// text/template, never html/template — HTML escaping would turn an apostrophe in somebody's
+// description of themselves into `&#39;`.
 const systemPrompt = `You say how well each half hour of the day suits each of somebody's reminders.
 
 btw shows one reminder at a time, at hours nobody chose, a few times a day. Your answer does not decide whether a reminder is shown — it makes a reminder likelier during the half hours you score highly and less likely during the ones you score low. There is no due date and nothing is overdue.
@@ -38,10 +34,11 @@ The curve is the answer. Everything else is context.
 
 - days is "mon", "mon-fri", "sat,sun", "weekends", or "all". Leaving it out means every day.
 - from and to are 24-hour times with any minutes you like: "10:00" to "13:00" says the middle of the morning to the middle of the day. A "to" at or before its "from" runs past midnight into the next day, so "22:00" to "02:00" is four hours of an evening.
-- v is how much better or worse than usual this stretch is. 0.5 is no opinion, 0.7 is a good moment, 0.3 is a poor one. 0 and 1 are for hours you are certain about and should be rare. Nothing here silences a reminder or guarantees one — they are the ends of a scale, not switches.
+- v is how timely the reminder is in that stretch. 0.5 is no opinion, 0.7 is a timely moment, 0.3 is an untimely one, and 1 is the best you can say for it — which guarantees nothing.
+- **0 is very untimely, and it is the one number that is a switch rather than a point on the scale: the reminder is not raised in those hours at all.** Use it where being reminded would be no use whatsoever — while they are asleep, or where the hours belong to the world and the world is shut. Anything you would still take grudgingly is 0.1.
 - Where two stretches overlap, the later one wins. Say the broad thing first and narrow it after.
 
-**A low number means "raising it then would be a waste", not "the thing cannot be done then".** A reminder is a prompt to think about something, not an order to do it that instant. Somebody reminded at lunchtime about an evening out can act on it — buy the tickets, tell the other person, decide not to go. Mark an hour down only when being reminded then would genuinely be no use: while they are asleep, or when it is too late for the reminder to change anything.
+**A low number means "raising it then would be a waste", not "the thing cannot be done then".** A reminder is a prompt to think about something, not an order to do it that instant. Somebody reminded at lunchtime about an evening out can act on it — buy the tickets, tell the other person, decide not to go. Mark an hour down when being reminded then would be untimely, and mark it 0 only when you would rather they were not reminded at all.
 
 **Almost everything has some shape.** Washing up is worse at four in the morning. Anything needing a shop is worse when shops are shut. Anything involving another person is worse when that person is asleep. Say that much at least.
 
@@ -56,7 +53,7 @@ For "buy stamps", where the hours belong to the world rather than to the person:
     [{"days": "mon-fri", "from": "09:00", "to": "17:00", "v": 0.8},
      {"days": "all", "from": "01:00", "to": "07:00", "v": 0.1}]
 
-The second line is a real judgement: there is no use raising it at five in the morning. The evenings and the weekend are left at 0.5, because a reminder to buy stamps is still worth having then even though the shop is shut — it is something to plan, not only something to do.
+The second line is 0.1 rather than 0: five in the morning is untimely rather than useless, and somebody awake then could still write a note to themselves. The evenings and the weekend are left at 0.5, because a reminder to buy stamps is still worth having then even though the shop is shut — it is something to plan, not only something to do.
 
 Reply with the JSON object only, with no prose and no markdown fences around it.`
 
@@ -83,19 +80,12 @@ const (
 	hoursAnyTime = `They are reachable at any hour, in {{.Timezone}}. All times below are their local time.`
 )
 
-// One template each, rather than four `{{define}}` blocks concatenated into one source.
+// One template each, rather than `{{define}}` blocks concatenated into one source: these
+// constants contain balanced `{{end}}`s of their own, so an outer block would be closed by
+// whichever the parser reached first, and a template that parses into something nobody wrote is
+// not a failure anybody would look for in a paragraph of English.
 //
-// Nothing was ever injectable here — every piece is a compile-time constant, and the person's
-// own words reach the template as *data*, which text/template never re-parses. Somebody whose
-// description of themselves contains `{{end}}` gets those five characters in the prompt, and a
-// test below holds that.
-//
-// The concatenation went anyway, because it was fragile for a duller reason. Both of these
-// constants already contain a balanced `{{end}}` of their own, so wrapping each in a
-// `{{define}}` meant the outer block was closed by whichever `{{end}}` the parser reached
-// first. It happened to be the right one. Editing the prose near an `{{if}}` could have made
-// it the wrong one, and the failure — a template that parses into something nobody wrote —
-// is one nobody would look for in a paragraph of English.
+// Somebody's own words reach a template as data, which text/template never re-parses.
 var (
 	systemTemplate       = template.Must(template.New("system").Parse(systemPrompt))
 	userTemplate         = template.Must(template.New("user").Parse(userPrompt))
@@ -105,11 +95,9 @@ var (
 
 // Categories are what the companion may call a reminder, each with the gloss it is given.
 //
-// Glossed rather than a bare list, because the distinctions that matter here are the ones a
-// bare word loses. "Errands" is bound by opening hours and "chores" is bound by nothing but
-// being awake — which is a scheduling fact, and the whole reason the two are separate words
-// rather than one. A model handed sixteen unexplained nouns guesses; handed sixteen sentences
-// it does not have to.
+// Glossed because a bare word loses the distinction that matters: "errands" is bound by opening
+// hours and "chores" by nothing but being awake, which is the scheduling fact that makes them
+// two words rather than one.
 var Categories = []struct{ Name, Gloss string }{
 	{"work", "the job and whatever it demands"},
 	{"personal", "the person's own business, where nothing more specific fits"},

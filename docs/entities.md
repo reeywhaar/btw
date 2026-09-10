@@ -204,11 +204,12 @@ a reversible scramble would only make it look protected. It is never sent back o
 carries `key_set` instead.
 
 `model` is **empty when nobody chose one**, and that is a state rather than a gap: it means
-"whatever the default is now". It used to be filled in on the way into the row so that every
-row named the model it would be asked with, which was wrong twice over. An account was pinned
-to whatever the default happened to be on the day it first saved, and the form came back with a
-model name where somebody had left a blank — so their next save picked, on their behalf,
-something they never typed.
+"whatever the default is now".
+
+Filling the default in on the way into the row is the tidier-looking alternative, and every row
+then names the model it will be asked with. It costs the difference between having chosen and
+not. An account is pinned to whichever default it first met, and the form comes back holding a
+model name where somebody left a blank — so their next save picks it on their behalf.
 
 The fallback is resolved at the moment of asking, by `Settings.ModelOrDefault`. A model somebody
 did type is kept whether or not it equals the default, because typing it is a choice.
@@ -252,11 +253,10 @@ every row is recomputable from what is there — the reminders, the account's `a
 — and nobody typed a word of it. It is also the half that churns: `main.db` is written when a
 person types something, and advice is rewritten whenever anything moves.
 
-**One JSON body under a version, not a column per field.** Columns were the first shape of this
-table and were the wrong instinct: this is a model's answer, and what is worth asking for
-changes whenever the prompt does. It went from a list of weekly windows to a curve over one day
-inside a week, which as columns would have been a migration carrying rows written under an
-older idea of what the answer was.
+**One JSON body under a version, not a column per field.** This is a model's answer, and what is
+worth asking for changes whenever the prompt does — the shape has moved more than once inside a
+week. A column per field makes each of those a migration, and each migration carries rows
+written under an older idea of what the answer was.
 
 A row whose `version` the reader does not recognise **is no advice at all**. That is not a
 fallback, it is the point: the row is recomputable, the account is already marked stale, and the

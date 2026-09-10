@@ -29,9 +29,8 @@ import { TextField } from "@app/components/TextField";
 /**
  * The model this account has given a key for.
  *
- * Here and not on the admin page, unlike the mail relay: a relay is the instance's and a
- * companion is not. The key spends its owner's credit, and what it is told is a description
- * of one person's life that nobody else on the instance should be scheduled against.
+ * Here and not on the admin page, unlike the mail relay: the key spends its owner's credit, and
+ * what it is told is a description of one person's life.
  */
 export function Companion() {
   const client = useQueryClient();
@@ -124,13 +123,10 @@ export function Companion() {
 }
 
 /**
- * Whether the companion is actually doing anything.
+ * Whether the companion is actually doing anything — otherwise a key that stopped working and a
+ * companion with little to say look identical.
  *
- * Without this the two states somebody most needs to tell apart look identical: a key that
- * stopped working and a companion that simply has little to say. It was the last gap in the
- * feature — the reason a failure was recorded at all was so it could be shown.
- *
- * No counts, deliberately: "some of them" rather than "5 of 7". See docs/api_design.md.
+ * No counts: "some of them" rather than "5 of 7". See docs/api_design.md.
  */
 function AdviceStatus({ advice }: { advice: Advice }) {
   // The mark and the sentence together, so neither has to be read to understand the other.
@@ -202,11 +198,8 @@ function AdviceStatus({ advice }: { advice: Advice }) {
 }
 
 /**
- * Roughly how long ago, in words.
- *
- * Rough on purpose, and never a clock time. btw does not show when anything is scheduled, and
- * a precise timestamp here would be the one place in the product inviting somebody to work out
- * when the next one is due.
+ * Roughly how long ago, in words. Never a clock time: btw shows no schedule, and a timestamp
+ * here would be the one place inviting somebody to work out when the next one is due.
  */
 function ago(at: number | null): string {
   if (at === null) return "never";
@@ -246,9 +239,9 @@ function CompanionDialog({
     if (!open) return;
     setForm({
       api_key: "",
-      // The stored value, blank included. It used to be blank only before the first save,
-      // because the default was written into the row — so reopening this handed back a model
-      // name nobody had typed, and saving again pinned it.
+      // The stored value, blank included, since blank is what "follow the default" looks like.
+      // Seeding it with the default's name instead would hand back a model nobody typed, and
+      // the next save would pin it.
       model: current.model,
       about: current.about,
     });
@@ -375,12 +368,9 @@ function isFlat(curve: number[][]): boolean {
 }
 
 /**
- * What the companion currently thinks, drawn rather than listed.
- *
- * Seven days of forty-eight numbers is 336 per reminder, and a list of 336 numbers is not
- * something anybody reads — it is something they scroll past. What somebody wants to know is
- * the *shape*: whether the evenings are lifted, whether the weekend differs from a Tuesday,
- * whether the model understood them at all. A week drawn as a grid answers that at a glance.
+ * What the companion currently thinks, drawn rather than listed. 336 numbers per reminder is
+ * something to scroll past; the shape — evenings lifted, weekend unlike a Tuesday — is what
+ * somebody actually wants, and a grid answers it at a glance.
  */
 function AdviceDialog({
   open,
@@ -527,18 +517,11 @@ function AdviceRow({ reminder }: { reminder: AdvisedReminder }) {
 }
 
 /**
- * A week, one row per day, drawn as half-hour bars against the rules that make a level
- * readable.
+ * A week, one row per day, drawn as half-hour bars against the rules that make a level readable.
  *
- * Bars with gaps between them rather than one filled outline. The outline said "a continuous
- * function of time", which is not what the answer is: it is forty-eight buckets, each holding
- * one number, and two neighbours agreeing is a fact worth being able to see rather than a
- * slab to be smoothed over.
- *
- * Divs rather than SVG, and that is forced. The chart has to fill whatever width it is given,
- * which in SVG means preserveAspectRatio="none" — and that scales x and y by wildly different
- * factors, so a one-pixel gap becomes a variable-width gap and a rounded corner becomes an
- * ellipse. Flexbox gives both for free and in real pixels.
+ * Gapped bars rather than a filled outline: the answer is forty-eight buckets, not a continuous
+ * function. Divs rather than SVG, because a chart that fills its width needs
+ * preserveAspectRatio="none", which turns a one-pixel gap into a variable one.
  */
 function Week({ curve }: { curve: number[][] }) {
   return (

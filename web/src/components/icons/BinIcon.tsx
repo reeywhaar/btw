@@ -1,13 +1,9 @@
 /**
- * A bin, at the size of the text beside it.
+ * A bin, at the size of the text beside it: the one mark on a reminder that ends it.
  *
- * The one mark on a reminder that ends it. It replaced a tick and a cross that did the same
- * thing as each other — *done* and *drop*, a to-do list's words, and btw is not one. The second
- * existed only so that finishing something never started did not mean claiming otherwise, and a
- * bin claims neither.
- *
- * It is also honest about where the thing goes, which the cross was not: a binned reminder is
- * kept, listed, and can be taken back out.
+ * A tick beside a cross is a to-do list's pair, and btw is not one — they end a reminder
+ * identically and differ only in the label. A bin claims neither, and is honest about where the
+ * thing goes, since a binned reminder is kept and can be taken back out.
  */
 export function BinIcon({ className = "" }: { className?: string }) {
   return (

@@ -28,11 +28,11 @@ Never "task", never "todo", never "item". Never "notification" in code — that 
 browser's word for what a nudge becomes once it is on screen, and keeping the two apart is
 what stops `sendNotification` and `sendNudge` both existing.
 
-Never "done" or "drop" either, and never "archive". btw is not a to-do list and had borrowed
-one's vocabulary: two marks on every row, *done* and beside it *drop*, which ended a reminder
-identically and differed only in the word. The second existed so that finishing something never
-started did not require claiming otherwise — a real problem, and a bin solves it better by
-claiming neither. One gesture, and it says where the thing actually went.
+Never "done" or "drop" either, and never "archive". They are a to-do list's words and btw is not
+one. The pair is tempting — *done*, and *drop* beside it so that finishing something never
+started does not mean claiming otherwise — and it costs two marks on every row that end a
+reminder identically and differ only in the label. A bin claims neither, so one gesture covers
+both, and it says where the thing went.
 
 ### The bin is a place, not a state
 

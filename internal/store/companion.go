@@ -10,12 +10,9 @@ import (
 	"btw/internal/openrouter"
 )
 
-// AboutLimit is how much somebody may write about themselves.
-//
-// Every word of it rides on every request the companion makes, so this is a token bill as
-// much as a column width. Two thousand characters is several paragraphs — more than anybody
-// has written about their own week — and the limit exists so that a pasted CV is refused at
-// the form rather than discovered as a surprise on somebody's OpenRouter invoice.
+// AboutLimit is how much somebody may write about themselves. Every word rides on every request
+// the companion makes, so this is a token bill as much as a column width — a pasted CV should be
+// refused at the form rather than found on an invoice.
 const AboutLimit = 2000
 
 // Companion reads the model an account configured, or the zero value if there is none.
@@ -50,14 +47,10 @@ func (s *Store) SetCompanion(ctx context.Context, principalID string, set openro
 		// paragraph of Georgian is not four times as long as the same paragraph in English.
 		return Invalid("that is more than %d characters about yourself", AboutLimit)
 	}
-	// The shape of the key is not checked, deliberately. A prefix rule would refuse a valid
-	// key the day OpenRouter changes the format, and the only thing that actually settles
-	// whether a key works is using it — which is what the test button is for.
-	//
-	// An empty model is stored empty. Filling in the default here was the tempting thing and
-	// was wrong twice: it pinned an account to whatever the default was on the day it first
-	// saved, and it handed the form back a model name where somebody had left a blank — so
-	// the next save chose, on their behalf, something they never picked.
+	// The key's shape is not checked: a prefix rule would refuse a valid key the day OpenRouter
+	// changes the format, and only using it settles the question. An empty model is stored empty
+	// and means "whatever the default is now" — filling it in here would pin an account to
+	// whichever default it first met.
 
 	_, err := s.main.ExecContext(ctx,
 		`INSERT INTO companion (principal_id, api_key, model, about, updated_at)

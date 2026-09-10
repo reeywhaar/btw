@@ -517,9 +517,8 @@ func TestAnUndeliveredAlertIsSentAgain(t *testing.T) {
 	}
 }
 
-// Stale advice is worth more than none. A model that mangles one reminder out of forty used to
-// cost that reminder everything it had, leaving it weighed at exactly 1 until some later round
-// happened to get it right.
+// Stale advice is worth more than none: without this a model that mangles one reminder out of
+// forty costs it everything it had until some later round happens to get it right.
 func TestAnAnswerThatCouldNotBeReadKeepsTheOneBeforeIt(t *testing.T) {
 	g := &gateway{}
 	g.start(t)

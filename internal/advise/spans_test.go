@@ -13,7 +13,6 @@ func spans(body string) string {
 	return `{"results":[{"id":"r_1","curve":` + body + `}]}`
 }
 
-// The requirement fixed buckets could not meet: arbitrary edges, said in the model's own words.
 func TestASpanPaintsExactlyTheHoursItNames(t *testing.T) {
 	got, _, misshapen := parse(spans(
 		`[{"days":"all","from":"10:00","to":"13:00","v":0.9}]`), known("r_1"))
@@ -183,8 +182,7 @@ func TestAnAnswerOfNothingButBadSpansIsRefused(t *testing.T) {
 	}
 }
 
-// The old shape still reads, because a model answers the question it expected at least as often
-// as the one it was given.
+// A model answers the question it expected at least as often as the one it was given.
 func TestAnArrayOfNumbersStillReads(t *testing.T) {
 	body := "[" + strings.Repeat(aDay(0.7)+",", store.Days-1) + aDay(0.7) + "]"
 	got, _, misshapen := parse(spans(body), known("r_1"))
@@ -196,10 +194,9 @@ func TestAnArrayOfNumbersStillReads(t *testing.T) {
 	}
 }
 
-// A model told to write "from" writes "start" often enough to matter, and the two failures
-// that causes are not equally visible. A missing "from" was refused and showed on screen; a
-// weight written as "value" read as the zero value — a span meant as 0.9 became 0.0 and was
-// drawn as a confident graph saying the opposite. The silent one is why aliases exist.
+// A model told to write "from" writes "start" often enough to matter, and a weight under the
+// wrong name would read as zero — a span meant as 0.9 drawn as a confident graph saying the
+// opposite.
 func TestASpanIsReadWhicheverNamesItUsed(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"as asked", `[{"days":"all","from":"20:00","to":"23:00","v":0.9}]`},

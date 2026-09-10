@@ -148,9 +148,9 @@ func (s *Server) deleteReminder(w http.ResponseWriter, r *http.Request) {
 
 // listBin is what has been binned and not yet thrown away.
 //
-// Its own route rather than a filter on the list, because after the bin stopped being "finished
-// reminders" it stopped being a slice of the same collection. It is a place, with its own life
-// and its own sweep, and `?binned=true` said "same thing, different rows".
+// Its own route rather than `?binned=true` on the list, because the bin is a place and not a
+// slice of one: it has its own screen, its own life and its own sweep. A parameter says "the
+// same collection, different rows", which is the one thing it is not.
 func (s *Server) listBin(w http.ResponseWriter, r *http.Request) {
 	list, err := s.store.Reminders(r.Context(), principal(r).ID, true)
 	if err != nil {

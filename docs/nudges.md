@@ -18,7 +18,7 @@ The best nudge arrives when you were nearly expecting it — at the hour you wou
 of the thing yourself, when you are in the mood to be asked.
 
 Nothing can read a mind, and btw does not pretend to. A uniform draw across the hours somebody
-is awake is not the right moment; it is the *absence of a wrong one*, and it is what makes the
+is awake is not the right moment; it is the _absence of a wrong one_, and it is what makes the
 question **when?** unnecessary, which is what lets a half-formed want be written down at all.
 
 So the randomness is not a gimmick and the surprise is not the point. It is a floor. The one
@@ -63,8 +63,8 @@ ceiling that had to agree with what the planner could actually place, and an off
 that agreement.
 
 The promise was not worth its machinery, and the machinery kept being wrong in ways that
-looked like the product ignoring somebody. What matters is *roughly this often, at hours
-nobody picked, while awake* — which is answerable from the clock and the last nudge, with one
+looked like the product ignoring somebody. What matters is _roughly this often, at hours
+nobody picked, while awake_ — which is answerable from the clock and the last nudge, with one
 timestamp of state.
 
 Everything else fell out. A rhythm change needs no announcing: the next tick works the answer
@@ -124,13 +124,12 @@ evening made with the morning's information.
 Not done, `priority > 0`, and past whatever floor the reminder states. That is a hard filter
 an index can serve, and it lives in SQL.
 
-**A reminder states no floor by default.** It used to inherit one of a day, which read as a
-sensible guess and behaved as an instruction — and silently capped the day at however many
-reminders somebody had. Eight reminders at a day apiece cannot fill ten slots however the day
-is drawn, and each floor drifts later with every nudge, so the next morning starts with a
-smaller pool than the evening before: ten a day became eight, then five.
+**A reminder states no floor by default.** An inherited floor of a day reads as a sensible
+guess and behaves as an instruction: eight reminders at a day apiece cannot fill ten slots
+however the day is drawn, and each floor drifts later with every nudge, so the next morning
+starts with a smaller pool than the evening before.
 
-A floor is a statement about one particular thing — *do not raise this more than weekly* — and
+A floor is a statement about one particular thing — _do not raise this more than weekly_ — and
 inheriting one nobody made is a preference nobody expressed overruling an appetite somebody
 did. Where one is stated it is obeyed absolutely, including against a budget that would like
 more.
@@ -189,32 +188,59 @@ hours, held as numbers from 0 to 1 and read against their own local clock — co
 hour is stretched onto a range and multiplied in:
 
 ```
-advice = 0.5 + confidence        confidence 0 → 0.5,  0.5 → 1.0,  1 → 1.5
+advice = confidence              0 → 0,  0.5 → 0.5,  1 → 1
 ```
 
-The companion is not *asked* for 336 numbers — it is asked for the stretches it has an opinion
+The companion's number **is** the multiplier. An unanswered hour counts as 0.5, and so does a
+reminder nothing has been said about.
+
+The companion is not _asked_ for 336 numbers — it is asked for the stretches it has an opinion
 about, and those are expanded into the grid on arrival. Why, in
 [companion.md](companion.md#what-it-asks-for). What matters here is the consequence: anything
 the companion did not mention arrives as 0.5, so a reminder it said one thing about is neutral
 for the rest of the week rather than damped by omission.
 
-**Nothing is a special case.** No threshold, no in-or-out, no separate rule for a reminder
-wanting somebody's full attention. A curve of 0.5 throughout is a companion with no opinion and
-comes to exactly 1, which is the same answer as never having been asked — and that is the
-property the whole design hangs on.
+**Nothing is a special case, with one exception.** No threshold, no in-or-out, no separate rule
+for a reminder wanting somebody's full attention. A curve of 0.5 throughout lands exactly where
+never having been asked lands, and that is the property the whole design hangs on.
 
-**Never zero, and not by rounding — by construction.** The floor is the guarantee: the
-companion moves a reminder around the week and does not get to remove one. Silencing is a
-person's decision with exactly one expression, priority zero, and a model able to reach the
-same outcome by answering zeroes would be a second, invisible way for something to stop
-arriving.
+It lands there at **half** rather than at one. A term meaning "no opinion" looks like it ought
+to multiply by 1, and scaling it to do so buys nothing: a weighted draw normalises by the total,
+so a factor applied to every candidate alike cancels. Halving a reminder nothing has been said
+about only halves it against reminders that are halved too.
 
-Three to one between the best half hour and the worst. Gentler than the twelve to one the
-windows this replaced could reach, and deliberately so: a curve applies its opinion to *every*
-hour rather than to the handful inside a window, so the same strength per hour adds up to much
-more over a week. Staleness runs to four and keeps climbing underneath either way, so a
-reminder the companion likes nowhere still surfaces — later, and by a route nothing here has to
-special-case.
+What is left is the number the model gave, unmodified, which is worth more than the tidiness of
+a 1 — one fewer place for the code and the prompt to disagree. A test pins the equivalence,
+because 0.5 reads as a bug to anybody meeting it cold.
+
+The exception is zero.
+
+##### Zero means never
+
+The alternative is a floor — never quite reaching zero, so that the companion **moves** a
+reminder around the week but cannot remove one, silencing staying a person's decision with
+priority zero its single expression. It costs the hours a model is certain about: a reminder
+merely damped at four in the morning still arrives at four in the morning sometimes.
+
+**The weighted draw is not what enforces it.** A draw already never lands on a weight of zero,
+but _every_ weight being zero is the one case that falls through to the uniform fallback below
+— which would then pick from exactly the reminders that were meant to be passed over. So a
+reminder the companion scored zero for the current half hour is filtered out before the draw
+sees it, beside the ones somebody silenced with priority zero.
+
+That leaves the fallback covering only a zero that came from **staleness**, which is the manual
+button: it ignores a reminder's own floor, so everything it offers may have been nudged a moment
+ago. Two different zeros, and only one of them means never.
+
+What zero costs instead is that a model answering it casually stops a reminder arriving, and
+says nothing. The prompt holds that line: it says plainly that zero is a switch rather than a
+point on the scale, and that anything still worth taking grudgingly is 0.1. A reminder zeroed
+across the week does not arrive until somebody opens _what it thinks_ and sees why.
+
+Nine to one between a stretch scored 0.9 and one scored 0.1. Staleness
+runs to four and keeps climbing underneath, so a reminder the companion merely dislikes still
+surfaces — later, and by a route nothing here has to special-case. Only an outright zero stops
+it.
 
 The advice applies to a **never-nudged** reminder too, rather than being skipped along with the
 staleness arithmetic. It is tempting to let something just written down arrive at once, but the
@@ -236,7 +262,7 @@ by somebody who was otherwise happy with it.
 It did not, and refusing there was nonsense: the button exists to prove the chain works, and a
 button that answers "that was raised too recently" to somebody who just pressed it proves
 nothing and looks broken. Somebody pressing it has asked for a nudge. The floor stops the same
-thing arriving twice in a morning *unasked*, which is a different thing entirely.
+thing arriving twice in a morning _unasked_, which is a different thing entirely.
 
 Two rules still hold on that path, because they are not about timing. A finished reminder is
 not sent, and neither is a silenced one — `priority = 0` is the difference between "not now"
@@ -252,10 +278,10 @@ weighted to zero, so "never" survives it.
 
 `POST /api/nudges` answers `200` with an `outcome`, and none of the three is an error:
 
-| outcome | what happened |
-| --- | --- |
-| `sent` | at least one device took it |
-| `nothing` | the pool was empty — everything is finished or silenced |
+| outcome       | what happened                                           |
+| ------------- | ------------------------------------------------------- |
+| `sent`        | at least one device took it                             |
+| `nothing`     | the pool was empty — everything is finished or silenced |
 | `undelivered` | a reminder was chosen and no push service would take it |
 
 The last two shared a sentence once, and it sent people to the wrong place. An empty list is
@@ -274,7 +300,7 @@ Three responses. Two are buttons and the third is the common one.
   interval passes.
 
 **Drop is not a smaller Done and it is not a delete.** It is the second half of what a nudge is
-for. A thought written down without a *when* has not been decided yet, and the arrival is where
+for. A thought written down without a _when_ has not been decided yet, and the arrival is where
 deciding happens — reading "go to the circus" on a Tuesday evening either makes you want to go
 or makes you realise you do not, and the second answer is worth exactly as much as the first.
 
@@ -300,7 +326,7 @@ asks for quiet, and asking for both is asking for nothing in particular.
 
 ### There is no snooze
 
-Doing nothing already *means* later: the reminder becomes eligible again when its interval
+Doing nothing already _means_ later: the reminder becomes eligible again when its interval
 passes. A snooze would be a third control doing a job that ignoring it and `min_interval`
 already do between them, and it is the control that turns an arrival into a decision somebody
 has to make.
@@ -313,14 +339,14 @@ this section does not have — see below.
 - **Three a day is a guess.** So are forty-five minutes and nine-to-ten.
 - **What "Later" would mean, if it existed.** The obvious button, and the reason it is not
   built is that its behaviour is genuinely ambiguous. Ignoring already defers by
-  `min_interval` — a day by default — so *Later* has to mean either **sooner** ("yes, I want
+  `min_interval` — a day by default — so _Later_ has to mean either **sooner** ("yes, I want
   this, ask again in a few hours") or **not today** ("skip past the next one"). Those are
   opposite behaviours behind one word, and picking wrong makes the button worse than absent.
   Note also that `Notification.maxActions` is 2, so Later cannot simply be added; it displaces
   Done or Drop.
 - **Shaping the hours from when somebody actually answers.** The honest way to close part of
   the gap between the floor and the right moment. Pressing Done or Drop is a real event,
-  reliably reported, and a few weeks of them say which hours a person is *receptive* in — not
+  reliably reported, and a few weeks of them say which hours a person is _receptive_ in — not
   what they want, only when they are willing to be asked. It may move **when** a nudge lands
   and never **whether** one does, which is what keeps it clear of what is refused below. It
   needs months of log before it has anything to say.
@@ -337,7 +363,7 @@ failing. But a source that stopped answering is a fact, and an unanswered nudge 
 "Ignored" is not something a browser reports honestly: `notificationclose` is uneven across engines and
 a phone face-down on a table reports nothing at all, so it would be inferred from silence.
 
-Inferring *you did not mean it* from silence, and then quietly raising something less often, is
+Inferring _you did not mean it_ from silence, and then quietly raising something less often, is
 the product deciding on somebody's behalf that a thing they wrote down does not matter.
 
 The line this draws is between the system giving up and a person changing their mind. The

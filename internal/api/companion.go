@@ -11,17 +11,11 @@ import (
 
 // adviceStale tells the companion loop that something changed under it.
 //
-// Best effort and never fatal, exactly like the scheduled nudge a rhythm change drops: failing
-// to mark means advice stays a little out of date, and that is not a reason to refuse
-// somebody's edit. It is called from every write that could change what the companion would
-// say — a reminder written, described, ended, revived or deleted, an `about` rewritten, a
-// rhythm moved — and never from one that could not, which is why nudging a reminder does not
-// appear in that list.
-// adviceForgotten drops what was said about a reminder that has been deleted outright.
-//
-// Only a delete, never a done: a finished reminder can be revived, and what the companion said
-// about it is still true. Best effort like the marking above — a row left behind is read by
-// nothing, since the weighting only ever asks about reminders that still exist.
+// Best effort and never fatal: out-of-date advice is not a reason to refuse somebody's edit.
+// Called from every write that could change what the companion would say, and from no other —
+// which is why nudging a reminder is not one of them.
+// adviceForgotten drops what was said about a reminder deleted outright. Never on a binning: a
+// binned reminder can come back, and what was said about it is still true.
 func (s *Server) adviceForgotten(r *http.Request, reminderID string) {
 	if err := s.store.ForgetAdvice(r.Context(), reminderID); err != nil {
 		s.log.Error("could not forget advice", "reminder", reminderID, "err", err)
@@ -74,16 +68,11 @@ func (s *Server) getCompanion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
-// adviceStatus is how the last round of questions went, as the interface needs it.
+// adviceStatus is how the last round of questions went.
 //
-// **No counts.** docs/api_design.md forbids one in a response body, and the reason applies
-// here as much as anywhere: a count in a payload is a count somebody renders, and "5 of 7
-// reminders" is a number that goes up. What somebody actually needs to know is whether the
-// companion has an opinion about everything or only some of it, and "some" says that without
-// putting their workload on a settings screen.
-//
-// The four states are derived here rather than left to the client to assemble out of
-// timestamps, so that "failed" means the same thing everywhere it is shown.
+// No counts, per docs/api_design.md: "some of your reminders" says what somebody needs without
+// putting a number that goes up on a settings screen. The states are derived here rather than
+// assembled from timestamps by each client.
 func (s *Server) adviceStatus(r *http.Request, principalID string) (map[string]any, error) {
 	state, err := s.store.Advice(r.Context(), principalID)
 	if err != nil {
@@ -187,13 +176,9 @@ func (s *Server) deleteCompanion(w http.ResponseWriter, r *http.Request) {
 
 // listAdvice is what the companion currently thinks, as it is actually stored.
 //
-// A window onto the weighting rather than a setting. Everything else about the companion is
-// invisible by design — btw shows no schedule — but a wrong answer was otherwise something
-// somebody could feel and never see, and "it has an opinion about some of your reminders" does
-// not say *which* opinion.
-//
-// Only the open list, and only advice in the current shape, because that is exactly what the
-// draw reads. A screen showing anything else would be showing something that is not happening.
+// A window onto the weighting rather than a setting: a wrong answer is otherwise something
+// somebody can feel and never see. Only the open list and only the current shape, because that
+// is exactly what the draw reads.
 func (s *Server) listAdvice(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	reminders, err := s.store.Reminders(r.Context(), p.ID, false)
@@ -262,18 +247,12 @@ func (s *Server) listAdvice(w http.ResponseWriter, r *http.Request) {
 
 // refreshAdvice asks the companion again, and waits for the answer.
 //
-// It used to hand the work to the loop and return 202, which is right for a background job and
-// wrong for a button: somebody who has just rewritten what they say about themselves presses
-// this to see the difference, and a screen that answers "asked for, come back later" makes them
-// judge a change they cannot see.
+// It blocks for as long as the model takes, which is long by the standards of everything else
+// here and is a deliberate press with somebody watching it. Answering before the work is done
+// would make them judge a change they cannot see.
 //
-// So it blocks, for as long as the model takes — bounded by the loop's own timeout — and
-// answers with the advice as it now stands. That is a long request by the standards of
-// everything else here, and it is a deliberate press with somebody watching it.
-//
-// Rate limited, because it makes an outbound request on the caller's behalf against a quota
-// with fifty a day in it. The screen holds a press for twenty seconds as well; this is the
-// floor under a screen that is not the one being used.
+// Rate limited: it spends from a quota with fifty a day in it, and the screen's own twenty
+// seconds is not a ceiling on a screen that is not the one being used.
 func (s *Server) refreshAdvice(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	if !s.adviceLimit.allow(p.ID) {
@@ -304,13 +283,9 @@ func (s *Server) refreshAdvice(w http.ResponseWriter, r *http.Request) {
 
 // testCompanion puts one question to the model and reports what answered.
 //
-// Against what is in the form, not against what was last saved — unlike the relay's test
-// send, which has no key to reconcile. The button lives inside the dialog, and a button beside
-// a field somebody has just corrected has to mean that correction, or pressing it teaches them
-// the wrong thing about the value they are looking at.
-//
-// It reconciles under the same rule Save follows: an empty key means the stored one. So what
-// was tried is what saving would store, which is what keeps the shortcut honest.
+// Against what is in the form, not what was last saved: a button beside a field somebody has
+// just corrected has to mean that correction. It reconciles under Save's rule — an empty key
+// means the stored one — so what was tried is what saving would store.
 func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		APIKey string `json:"api_key"`

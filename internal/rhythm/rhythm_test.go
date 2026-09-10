@@ -148,8 +148,8 @@ func TestAnUnknownZoneStillNudges(t *testing.T) {
 	}
 }
 
-// The case the old CHECK refused, and the reason it refused it: a waking day that spans two
-// local dates. Somebody awake from noon until four is awake at one in the morning.
+// A waking day spanning two local dates: somebody awake from noon until four is awake at one in
+// the morning.
 func TestAWakingWindowThatCrossesMidnight(t *testing.T) {
 	r := store.Rhythm{
 		Timezone: "UTC", WindowEnabled: true,
@@ -183,10 +183,9 @@ func TestAWakingWindowThatCrossesMidnight(t *testing.T) {
 	}
 }
 
-// What actually blocked this. Since read "the start of today's waking day" as today's waking
-// hour; at one in the morning, for somebody awake from noon, that hour is eleven hours away —
-// so every nudge looked scheduled for the future and the small hours went silent for exactly
-// the people who asked to be awake in them.
+// At one in the morning, for somebody awake from noon, today's waking hour is eleven hours
+// away — so reading Since as that hour puts every nudge in the future and silences the small
+// hours for exactly the people who asked to be awake in them.
 func TestTheWakingDayBeganYesterdayInTheSmallHours(t *testing.T) {
 	r := store.Rhythm{
 		Timezone: "UTC", WindowEnabled: true,

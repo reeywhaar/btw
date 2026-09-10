@@ -1,14 +1,8 @@
-// Package openrouter puts a question to a model, through the gateway an account has a key
-// for.
+// Package openrouter puts a question to a model, through the gateway an account has a key for.
 //
-// Split from the store on the same seam as [btw/internal/mail]: the store decides what the
-// companion *is* and holds its key, and this is the half that opens a socket. Nothing here
-// touches the database.
-//
-// OpenRouter rather than a model vendor directly, because the choice of model is the
-// account's and changing it should be a form field. One gateway, one credential, and the
-// difference between two models is a string — which is what makes the model worth exposing
-// at all.
+// Split from the store on the same seam as [btw/internal/mail]: nothing here touches the
+// database. OpenRouter rather than a vendor directly, so the difference between two models is a
+// string and the choice can be a form field.
 package openrouter
 
 import (
@@ -26,42 +20,26 @@ import (
 	"btw/internal/proxy"
 )
 
-// Endpoint is OpenRouter's chat completions route.
 const Endpoint = "https://openrouter.ai/api/v1/chat/completions"
 
-// DefaultModel is what an account gets without naming one.
-//
-// Free, so somebody who has only just found out this feature exists can try it without a
-// balance, and it is what almost everybody will end up leaving it on. The `:free` variants
-// accept far fewer parameters than the paid slug of the same model — no `structured_outputs`
-// among them — so anything asking for a strict schema has to check rather than assume.
+// DefaultModel is what an account gets without naming one. Free, so this can be tried without a
+// balance. The `:free` variants accept far fewer parameters than the paid slug of the same
+// model — no `structured_outputs` — so anything wanting a strict schema has to check.
 const DefaultModel = "minimax/minimax-m3:free"
 
-// ErrRateLimited is a refusal that will pass on its own.
-//
-// A sentinel rather than a string somebody greps for, because the caller's response to it is
-// categorically different from every other refusal here: a rejected key and a missing model
-// want a person, and this wants a wait. A background loop that cannot tell them apart either
-// hammers a quota it has already exhausted or gives up on a key that is fine.
+// ErrRateLimited is the one refusal that passes on its own. A sentinel, because a loop that
+// cannot tell it from the rest either hammers an exhausted quota or gives up on a good key.
 var ErrRateLimited = errors.New("rate limited")
 
-// Timeout caps one exchange.
-//
-// Long, because a reasoning model thinks before it answers and a free endpoint queues. It is
-// still a cap: a gateway that has stopped answering must not hold a request open until the
-// browser gives up first, because then nobody learns why.
+// Timeout caps one exchange. Long, because a reasoning model on a free endpoint queues; still a
+// cap, so a dead gateway does not hold the request until the browser gives up first.
 const Timeout = 60 * time.Second
 
-// endpoint is where requests go. A var only so a test can point it at a server it started
-// itself — the same trick as rootCAs in internal/mail, and for the same reason: what is
-// worth asserting is the conversation, not that net/http was called.
+// endpoint is where requests go. A var only so a test can point it at a server of its own.
 var endpoint = Endpoint
 
-// SetEndpoint replaces where requests go and returns a function putting the old one back.
-//
-// For tests; the daemon never calls it. Exported because the handler that decides *which* key
-// to try lives in another package, and the alternative was an api test that reached
-// openrouter.ai for real — slow, offline-fragile, and testing somebody else's uptime.
+// SetEndpoint replaces where requests go and returns a function putting the old one back. For
+// tests; exported because the handler deciding which key to try is in another package.
 func SetEndpoint(u string) func() {
 	old := endpoint
 	endpoint = u
@@ -72,26 +50,17 @@ func SetEndpoint(u string) func() {
 type Settings struct {
 	APIKey string
 
-	// Model is what the account chose, or empty for whatever the default is now.
-	//
-	// **Empty is a state, not a gap.** It was filled in with [DefaultModel] on the way into
-	// the database, which made "I have not chosen" and "I chose minimax/minimax-m3:free" the
-	// same row — so the first save silently pinned an account to today's default, and the
-	// field somebody had left blank came back with a model name in it. Resolved here instead,
-	// at the moment of asking, so an account that never chose follows the default wherever it
-	// goes.
+	// Model is what the account chose, or empty for whatever the default is now. Empty is a
+	// state, not a gap: filling it in on the way to the database would pin an account to
+	// today's default, so it is resolved at the moment of asking instead.
 	Model string
 
-	// About is what the model is told about the person, in their own words.
-	//
-	// The whole reason a companion can say anything useful about when to raise a reminder.
-	// A model that knows somebody sleeps until noon does not offer them a nine o'clock slot,
-	// and nothing else in btw records that — a rhythm's waking window says which hours are
-	// allowed, never which are wanted.
+	// About is what the model is told about the person, in their own words — the whole reason a
+	// companion can say anything useful. A rhythm's waking window says which hours are allowed,
+	// never which are wanted.
 	About string
 }
 
-// ModelOrDefault is the model to actually ask, which is the chosen one or the default.
 func (s Settings) ModelOrDefault() string {
 	if s.Model == "" {
 		return DefaultModel
@@ -99,43 +68,32 @@ func (s Settings) ModelOrDefault() string {
 	return s.Model
 }
 
-// Configured reports whether there is a companion to ask at all.
-//
-// The key alone. A model without a key cannot be reached, and a key without an About still
-// answers — worse than it would with one, but the account has opted in either way.
+// Configured is the key alone: a key without an About still answers, worse than it would with
+// one.
 func (s Settings) Configured() bool { return s.APIKey != "" }
 
 // Result is what a successful exchange says about itself.
 type Result struct {
 	// Model is what actually served the request, which is not always what was asked for:
-	// OpenRouter falls back between providers, and a slug can resolve to a variant. Worth
-	// showing, because "you asked for X and Y answered" is a thing somebody wants to know
-	// before they trust the answers.
+	// OpenRouter falls back between providers and a slug can resolve to a variant.
 	Model string
 
-	// Tokens is what the exchange cost, so a test press says something about the next
-	// thousand.
+	// Tokens is what the exchange cost, so a test press says something about the next thousand.
 	Tokens int
 
 	// Truncated is whether the model ran out of ceiling mid-answer.
 	Truncated bool
 
-	// reply is unexported so that [Check]'s caller cannot come to depend on the word the model
-	// happened to say, while [Ask]'s gets it through a return value that means it.
+	// reply is unexported so [Check]'s caller cannot depend on the word the model happened to
+	// say; [Ask]'s gets it through a return value that means it.
 	reply string
 }
 
 // Check asks the model to say one word, and reports what came back.
 //
 // A real completion rather than `GET /api/v1/key`, which would prove the key is live and
-// nothing about the model. The model is the other half of what somebody typed, and it is the
-// half they are likelier to get wrong — a slug with a dropped `:free`, a model that has been
-// retired, one their key has no credit for. One completion proves both, and on the default
-// model it costs nothing.
-//
-// The same argument as the relay's test send: an account setting this up gets it wrong two or
-// three times, and each correction should be a form field and a press rather than a support
-// question.
+// nothing about the model — the half somebody is likelier to get wrong. One completion proves
+// both, and on the default model it costs nothing.
 func Check(ctx context.Context, set Settings, via proxy.Settings) (Result, error) {
 	if !set.Configured() {
 		return Result{}, errors.New("there is no key to check")
@@ -143,9 +101,8 @@ func Check(ctx context.Context, set Settings, via proxy.Settings) (Result, error
 
 	body := map[string]any{
 		"model": set.ModelOrDefault(),
-		// Small on purpose. This asks whether the gateway answers, not whether it answers
-		// well, and a reasoning model's thinking counts against the same ceiling — so it is
-		// generous enough that the reply is not cut off before it starts.
+		// Small, but a reasoning model's thinking counts against the same ceiling, so not so
+		// small that the reply is cut off before it starts.
 		"max_tokens": 200,
 		"reasoning":  map[string]any{"exclude": true},
 		"messages": []map[string]string{
@@ -155,14 +112,12 @@ func Check(ctx context.Context, set Settings, via proxy.Settings) (Result, error
 	return post(ctx, set.APIKey, body, via)
 }
 
-// Ask puts a prompt to the configured model and returns what it said.
+// Ask puts a prompt to the configured model and returns what it said — the general form of
+// [Check].
 //
-// The general form of [Check]: same credential, same error handling, a real answer wanted.
-//
-// JSON mode rather than a strict schema, because the default model is a `:free` variant and
-// those advertise `response_format` without `structured_outputs` — asking for a schema they
-// cannot honour gets prose back from a request that looked like it demanded otherwise. The
-// caller parses leniently for the same reason.
+// JSON mode rather than a strict schema: a `:free` variant advertises `response_format` without
+// `structured_outputs`, so asking for a schema it cannot honour gets prose back from a request
+// that looked like it demanded otherwise.
 func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user string, maxTokens int) (string, Result, error) {
 	if !set.Configured() {
 		return "", Result{}, errors.New("there is no companion to ask")
@@ -171,18 +126,13 @@ func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user str
 	body := map[string]any{
 		"model":      set.ModelOrDefault(),
 		"max_tokens": maxTokens,
-		// A reasoning model otherwise leaks its thinking into the content, which is the single
+		// A reasoning model otherwise leaks its thinking into the content, which is the
 		// likeliest reason a JSON answer fails to parse.
 		"reasoning": map[string]any{"exclude": true},
 		// Low, not zero: this is extraction, not invention.
 		"temperature": 0.2,
-		// Fresh every time, and deliberately not a constant.
-		//
-		// A fixed seed would make the answer reproducible, which sounds like a virtue and is
-		// the opposite of one here: the same question is asked again whenever anything changes,
-		// and a model that put a reminder in the wrong half of the week would put it there
-		// again, identically, forever. A new draw each time is the only thing that lets a bad
-		// answer be replaced by a better one without the question itself changing.
+		// Fresh every time, deliberately. A fixed seed would put a reminder wrongly in the same
+		// half of the week forever, however often the question was asked again.
 		"seed":            rand.Int64(),
 		"response_format": map[string]any{"type": "json_object"},
 		"messages": []map[string]string{
@@ -196,9 +146,8 @@ func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user str
 		return "", Result{}, err
 	}
 	if res.Truncated {
-		// Named rather than left to the parser, because a truncated answer is a torn-off JSON
-		// object and "unexpected end of input" sends somebody looking at the prompt when the
-		// fix is a bigger ceiling.
+		// "unexpected end of input" would send somebody to the prompt when the fix is a bigger
+		// ceiling.
 		return "", res, errors.New("the answer was cut off before it finished; allow more tokens")
 	}
 	return res.reply, res, nil
@@ -242,17 +191,14 @@ func post(ctx context.Context, key string, body map[string]any, via proxy.Settin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	// Through a proxy when one is configured and switched on, and straight out otherwise. The
-	// decision is entirely proxy.Send's; nothing here needs to know which happened, which is
-	// what keeps the two paths from drifting apart.
+	// The decision is entirely proxy.Send's, which is what keeps the two paths from drifting.
 	resp, err := proxy.Send(ctx, req, via)
 	if err != nil {
 		return Result{}, fmt.Errorf("reach the gateway: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Bounded, because this is a remote nobody here controls and a body that never ends
-	// would hold the request open past the timeout that was supposed to bound it.
+	// Bounded: a body that never ends would outlive the timeout meant to bound it.
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return Result{}, fmt.Errorf("read the reply: %w", err)
@@ -260,14 +206,11 @@ func post(ctx context.Context, key string, body map[string]any, via proxy.Settin
 
 	var parsed completion
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		// A gateway that answered with something other than JSON is worth quoting rather
-		// than summarising: it is usually a proxy's error page, and the page says which.
+		// Quoted rather than summarised: it is usually a proxy's error page, and it says which.
 		return Result{}, fmt.Errorf("%s: %s", resp.Status, snippet(raw))
 	}
 
-	// An error can arrive with a matching status or inside a 200 — OpenRouter answers 200
-	// with the fault in the body when a provider dies after generating part of an answer, so
-	// the status code alone is not the whole story.
+	// OpenRouter answers 200 with the fault in the body when a provider dies partway through.
 	if f := firstFault(parsed); f != nil {
 		return Result{}, explain(f.Code, resp.StatusCode, f.Message)
 	}
@@ -298,11 +241,8 @@ func firstFault(c completion) *fault {
 	return nil
 }
 
-// explain turns a status into the sentence somebody can act on.
-//
-// The gateway's own words go with it, never instead of it. "Unauthorized" and "this model
-// wants credit" and "too many requests, wait a minute" are three different afternoons, and a
-// single "that did not work" sends somebody to check the wrong thing first.
+// explain turns a status into the sentence somebody can act on, with the gateway's own words
+// beside it and never instead: a single "that did not work" sends them to the wrong field.
 func explain(code, status int, message string) error {
 	if code == 0 {
 		code = status
@@ -319,9 +259,7 @@ func explain(code, status int, message string) error {
 	case http.StatusNotFound:
 		return fmt.Errorf("no such model: %s", said)
 	case http.StatusTooManyRequests:
-		// The one failure that is not a mistake. The free models allow twenty requests a
-		// minute and fifty a day until credit has been bought, so a loop will meet this
-		// honestly rather than through a bug.
+		// Not a mistake: free models allow twenty a minute and fifty a day.
 		return fmt.Errorf("%w: %s", ErrRateLimited, said)
 	case http.StatusBadGateway, http.StatusServiceUnavailable:
 		return fmt.Errorf("the model is unavailable: %s", said)
