@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1494,5 +1495,62 @@ func TestTheDefaultModelIsAnAdministratorsAndReachesTheAccountForm(t *testing.T)
 	}
 	if body.DefaultModel != "anthropic/claude-sonnet-5" {
 		t.Errorf("default_model = %q, want the administrator's", body.DefaultModel)
+	}
+}
+
+// A one-word completion proves a key and a slug. It does not prove the thing the loop actually
+// does, and a model that answers cheerfully in an unusable shape is invisible until the
+// weighting has been quietly reading nothing.
+func TestTheTestPressPutsTheRealQuestionAndReadsTheAnswer(t *testing.T) {
+	var asked string
+	answer := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		asked = body.Messages[len(body.Messages)-1].Content
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"model":"m","choices":[{"message":{"content":%q}}],"usage":{"total_tokens":7}}`, answer)
+	}))
+	defer srv.Close()
+	defer openrouter.SetEndpoint(srv.URL)()
+
+	h := newHarness(t)
+	h.signIn()
+	h.do("PUT", "/api/companion", map[string]any{"api_key": "k"}).Body.Close()
+
+	// Made up here, not the account's own: the press has to work before anything is written
+	// down, and the answer to "does this model work" must not change with somebody's list.
+	answer = `{"results":[
+	  {"id":"rem_probe_medication","curve":[{"days":"all","from":"08:00","to":"10:00","v":0.9}]},
+	  {"id":"rem_probe_bins","curve":[{"days":"tue","from":"18:00","to":"22:00","v":0.9}]},
+	  {"id":"rem_probe_stamps","curve":[{"days":"mon-fri","from":"10:00","to":"17:00","v":0.8}]},
+	  {"id":"rem_probe_stretch","curve":[{"days":"all","from":"08:00","to":"22:00","v":0.6}]}]}`
+	var out struct {
+		Model  string   `json:"model"`
+		Read   string   `json:"read"`
+		Shapes []string `json:"shapes"`
+	}
+	decodeBody(t, h.do("POST", "/api/companion/test", map[string]any{}), &out)
+	if !strings.Contains(asked, "rem_probe_medication") {
+		t.Errorf("asked %q, want the real question with the made-up list", asked)
+	}
+	if out.Read != "all" {
+		t.Errorf("read = %q, want all of it read", out.Read)
+	}
+
+	// The failure worth catching: it answers, and nothing can be read out of it.
+	answer = "ok"
+	decodeBody(t, h.do("POST", "/api/companion/test", map[string]any{}), &out)
+	if out.Read != "none" {
+		t.Errorf("read = %q, want a cheerful non-answer reported as unreadable", out.Read)
+	}
+
+	// A week in a shape the parser refuses says which shape, rather than only that it failed.
+	answer = `{"results":[{"id":"rem_probe_stamps","curve":[[0.5,0.5],[0.5]]}]}`
+	decodeBody(t, h.do("POST", "/api/companion/test", map[string]any{}), &out)
+	if out.Read != "none" || len(out.Shapes) == 0 {
+		t.Errorf("read = %q, shapes = %v, want the shape named", out.Read, out.Shapes)
 	}
 }

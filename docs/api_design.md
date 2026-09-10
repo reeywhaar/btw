@@ -258,7 +258,7 @@ GET    /api/companion                    {configured, model, key_set, about, def
                                           about_limit, advice?}
 PUT    /api/companion                    {api_key, model, about} → the above
 DELETE /api/companion                    → 204
-POST   /api/companion/test               {} → {model, tokens}
+POST   /api/companion/test               {} → {model, tokens, read, shapes}
 GET    /api/companion/advice             {reminders: [{id, text, advised, categories?,
                                           exclusive?, curve?, advised_at?}], days, windows}
 POST   /api/companion/advice/refresh     {} → the above, once it has asked
@@ -297,6 +297,11 @@ cannot offer one model while the loop uses another.
 `PUT /api/admin/companion` is not checked against OpenRouter and could not be: the instance has
 no key of its own. An empty `model` clears it. It exists because slugs are retired, and without
 it the day the compiled-in model goes every account that never chose one breaks at once.
+
+`POST /api/companion/test` puts the real question — with a made-up list, so it works before
+anything is written down — and parses the answer. `read` is `all`, `some` or `none`, and
+`shapes` names what arrived for whatever could not be read. A one-word probe would pass for a
+model that cannot hold a JSON object together. It shares the refresh's four a minute.
 
 `advice` is `{status, advised_at, attempted_at, error, stale}`, and is **absent until a key is
 configured** — reporting on a loop that never runs would be reporting on nothing. `status` is

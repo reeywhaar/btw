@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"btw/internal/advise"
 	"btw/internal/openrouter"
 	"btw/internal/store"
 )
@@ -280,12 +281,24 @@ func (s *Server) refreshAdvice(w http.ResponseWriter, r *http.Request) {
 	s.listAdvice(w, r)
 }
 
-// testCompanion puts one question to the model and reports what answered.
+// testCompanion puts the real question to the model and reads the answer back.
+//
+// The real one, with a made-up list and a made-up description, because a one-word completion
+// proves a key and a slug and nothing else. The model worth catching here is the one that
+// answers cheerfully and cannot hold a JSON object together — which is otherwise invisible
+// until a loop has been quietly producing nothing.
 //
 // Against what is in the form, not what was last saved: a button beside a field somebody has
 // just corrected has to mean that correction. It reconciles under Save's rule — an empty key
 // means the stored one — so what was tried is what saving would store.
 func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
+	// The same ceiling a refresh gets, because it now costs the same: one real question
+	// against a quota with fifty a day in it.
+	if !s.adviceLimit.allow(principal(r).ID) {
+		writeError(w, http.StatusTooManyRequests, "that was just asked; give it a moment")
+		return
+	}
+
 	var req struct {
 		APIKey string `json:"api_key"`
 		Model  string `json:"model"`
@@ -330,7 +343,7 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := openrouter.Check(r.Context(), set, via)
+	res, err := advise.Try(r.Context(), set, via)
 	if err != nil {
 		// 502 rather than 500, for the reason docs/mail.md gives about a refused send:
 		// everything on this side worked and something upstream did not, and a 500 sends
@@ -339,11 +352,26 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+
+	// No counts, per docs/api_design.md. "Some of them" is what somebody needs to see that an
+	// answer was partly unreadable, without a number on a settings screen.
+	read := "none"
+	switch {
+	case res.Answered >= res.Asked:
+		read = "all"
+	case res.Answered > 0:
+		read = "some"
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		// What actually answered, which is not always what was asked for — OpenRouter falls
 		// back between providers, and a slug can resolve to a variant.
 		"model":  res.Model,
 		"tokens": res.Tokens,
+		"read":   read,
+		// What arrived instead, for whatever could not be read, so a refusal says which shape
+		// rather than leaving somebody to find it in a log.
+		"shapes": res.Shapes,
 	})
 }
 

@@ -45,9 +45,9 @@ type Scheduler interface {
 // Adviser is the loop that asks somebody's companion what it makes of their reminders.
 //
 // One method, and it waits: somebody who has just rewritten what they say about themselves
-// wants to see the difference, not a note telling them to look again later. An interface for
-// the same reason [Scheduler] is one — so internal/api does not import the package that
-// imports it.
+// wants to see the difference, not a note telling them to look again later. An interface
+// rather than the type, for the same reason [Scheduler] is one: the loop holds a store and a
+// logger of its own, and a handler that took the whole of it could reach both.
 type Adviser interface {
 	Look(ctx context.Context, principalID string) error
 }

@@ -40,10 +40,14 @@ export type CompanionEdit = {
   about: string;
 };
 
-/** What answered, which is not always what was asked for. */
+/** What answered, and whether the answer could be read. */
 export type CompanionTest = {
   model: string;
   tokens: number;
+  /** How much of the made-up list came back in a shape the weighting can use. */
+  read: "all" | "some" | "none";
+  /** What arrived instead, for whatever could not be read — "7x24", "336". */
+  shapes: string[] | null;
 };
 
 export const getCompanion = () => request<Companion>("/api/companion");

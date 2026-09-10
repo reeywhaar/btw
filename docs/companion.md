@@ -58,11 +58,27 @@ reported as its own kind of refusal.
 
 ## Trying it
 
-`POST /api/companion/test` sends one completion and reports what answered.
+`POST /api/companion/test` puts **the real question** to the model and reads the answer back.
 
-**A real completion rather than `GET /api/v1/key`**, which would prove the key is live and
-nothing about the model — the half somebody is likelier to get wrong. One completion proves
-both, and on the default model it costs nothing.
+Not `GET /api/v1/key`, which proves a key is live and nothing about the model. Not a one-word
+completion either: that proves a key and a slug, and the model worth catching is the one that
+answers cheerfully and cannot hold a JSON object together, or writes a week in a shape the
+parser refuses. That failure is otherwise invisible until the loop has been quietly producing
+nothing for a week.
+
+**With a made-up list and a made-up description**, not the account's own. A press has to work
+before anything has been written down, and the answer to "does this model work" must not change
+with what somebody happens to have on their list. Four reminders, chosen to need every part of
+the answer: one bound to a clock, one to opening hours, one to being awake, one that suits most
+of a week.
+
+The reply is parsed exactly as a real round's is, and the press reports how much of it could be
+read — `all`, `some` or `none`, with the shapes that arrived instead for the rest. No counts,
+per [api_design.md](api_design.md#companion).
+
+Nothing is stored. The press reconciles unsaved form values, so an answer earned under settings
+nobody has saved has no row it belongs to. It shares the refresh's ceiling of four a minute,
+because it now costs the same.
 
 **Against what is in the form, not what was last saved.** The button sits beside the fields it
 is about, and a button beside a value somebody has just corrected has to mean that correction.

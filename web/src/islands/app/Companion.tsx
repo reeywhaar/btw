@@ -333,8 +333,22 @@ function CompanionDialog({
       {test.isSuccess && (
         // What answered, and not what was asked for: OpenRouter falls back between providers,
         // and knowing which one replied is worth more than "it worked".
-        <p className="text-sm text-muted">
-          {test.data.model} answered, {test.data.tokens} tokens.
+        <p
+          className={
+            test.data.read === "all"
+              ? "text-sm text-muted"
+              : "text-sm text-warn"
+          }
+        >
+          {test.data.model} answered, {test.data.tokens} tokens.{" "}
+          {test.data.read === "all"
+            ? "It was asked a few made-up reminders and placed all of them."
+            : test.data.read === "some"
+              ? "It placed some of a few made-up reminders and not the rest."
+              : "It answered nothing that could be read."}
+          {test.data.shapes?.length
+            ? ` It sent ${[...new Set(test.data.shapes)].join(", ")}.`
+            : ""}
         </p>
       )}
       {/* The gateway's own words, not "that did not work": a rejected key, a model with no
