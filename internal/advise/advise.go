@@ -29,10 +29,6 @@ import (
 // minutes they would exhaust it before the evening.
 const Every = 30 * time.Minute
 
-// askTimeout bounds one question. Generous: a reasoning model on a free endpoint queues, and
-// nothing is waiting on the answer.
-const askTimeout = 3 * time.Minute
-
 // Alerter says something to a person's devices about btw itself. One method, so this package
 // does not import the scheduler and a test can watch what would have been sent.
 type Alerter interface {
@@ -165,9 +161,6 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, askTimeout)
-	defer cancel()
 
 	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(len(reminders)))
 	if err != nil {

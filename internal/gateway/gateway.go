@@ -35,9 +35,14 @@ const HuggingFaceModel = "deepseek-ai/DeepSeek-V4.1-Flash"
 // cannot tell it from the rest either hammers an exhausted quota or gives up on a good key.
 var ErrRateLimited = errors.New("rate limited")
 
-// Timeout caps one exchange. Long, because a reasoning model on a free endpoint queues; still a
-// cap, so a dead gateway does not hold the request until the browser gives up first.
-const Timeout = 60 * time.Second
+// Timeout caps one exchange, and is the only thing that does.
+//
+// Long, because a reasoning model on a free endpoint queues. Applied here rather than left to
+// each caller, so a caller that forgets still cannot hold a request open until the browser
+// gives up first; a caller with a shorter deadline of its own still wins.
+//
+// One constant. A second one further out would read as the bound and behave as nothing.
+const Timeout = 3 * time.Minute
 
 // override stands in for every provider's address at once. A var only so a test can point them
 // at a server of its own.

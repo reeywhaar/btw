@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"btw/internal/proxy"
 )
@@ -284,5 +285,31 @@ func TestEachServiceHasItsOwnAddressAndDefault(t *testing.T) {
 	// A row written before there were two still asks somewhere.
 	if (Provider("")).OrDefault() != OpenRouter || Provider("anthropic").OrDefault() != OpenRouter {
 		t.Error("an unset or unknown service does not fall back to the default")
+	}
+}
+
+// A caller's shorter deadline has to survive the one applied here, or every caller's is
+// decoration and only this package's number means anything.
+func TestACallersOwnDeadlineIsNotOverridden(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	serve(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	_, _, err := Ask(ctx, Settings{APIKey: "k"}, direct, "s", "u", 200)
+	if err == nil {
+		t.Fatal("Ask() = nil, want the caller's deadline to end it")
+	}
+	// Comfortably under Timeout, which is what proves whose deadline was used.
+	if took := time.Since(started); took > 30*time.Second {
+		t.Errorf("took %s, want the caller's 100ms rather than the package's %s", took, Timeout)
 	}
 }
