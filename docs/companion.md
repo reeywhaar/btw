@@ -198,6 +198,11 @@ Five things in the question are load-bearing and have tests asserting they are s
 The categories are **glossed rather than listed**: _errands_ is "bound by opening hours" and
 _chores_ is "bound by nothing but being awake", which is the reason they are two words.
 
+That is also the bar for adding one, in `internal/advise/categories.go`: a category earns its
+place by implying *when*. _medication_ is bound to the clock where a hospital appointment is
+bound to opening hours, which is why they are not both _health_. A word saying only what a
+reminder is about buys nothing and costs a line of every request.
+
 ### The answer is read leniently
 
 A `:free` model in JSON mode is a request, not a guarantee. The parser accepts a bare array as

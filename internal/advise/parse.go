@@ -74,7 +74,7 @@ func parse(reply string, known map[string]bool) (map[string]store.Advice, int, [
 		a := store.Advice{Exclusive: soft[bool](e.Exclusive)}
 		for _, c := range soft[[]string](e.Category) {
 			c = strings.ToLower(strings.TrimSpace(c))
-			if slices.ContainsFunc(Categories, func(k struct{ Name, Gloss string }) bool { return k.Name == c }) {
+			if slices.ContainsFunc(Categories, func(k Category) bool { return k.Name == c }) {
 				a.Categories = append(a.Categories, c)
 			}
 		}

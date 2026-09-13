@@ -93,30 +93,6 @@ var (
 	hoursAnyTimeTemplate = template.Must(template.New("hoursAnyTime").Parse(hoursAnyTime))
 )
 
-// Categories are what the companion may call a reminder, each with the gloss it is given.
-//
-// Glossed because a bare word loses the distinction that matters: "errands" is bound by opening
-// hours and "chores" by nothing but being awake, which is the scheduling fact that makes them
-// two words rather than one.
-var Categories = []struct{ Name, Gloss string }{
-	{"work", "the job and whatever it demands"},
-	{"personal", "the person's own business, where nothing more specific fits"},
-	{"family", "partner, children, parents, relatives"},
-	{"social", "friends, meeting people, calls and replies that are not work"},
-	{"health", "appointments, medication, anything medical"},
-	{"fitness", "exercise and sport"},
-	{"finance", "bills, payments, budgeting, taxes"},
-	{"admin", "paperwork, renewals, bureaucracy, accounts"},
-	{"shopping", "buying things, in a shop or online"},
-	{"errands", "short tasks that have to happen out of the house, and so are bound by opening hours"},
-	{"chores", "housework and maintenance at home, bound by nothing but being awake"},
-	{"learning", "study, courses, reading to learn something"},
-	{"creative", "making things, writing, music, art"},
-	{"entertainment", "watching, playing, listening, going out for fun"},
-	{"travel", "trips, packing, bookings, getting somewhere"},
-	{"pets", "feeding, walking, the vet"},
-}
-
 // System is the standing half of the question: what the answer must look like.
 //
 // Exported, and it takes no arguments, so that reading the exact text a model is sent is a
