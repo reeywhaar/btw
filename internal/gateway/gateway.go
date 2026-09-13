@@ -1,9 +1,9 @@
-// Package openrouter puts a question to a model, through the gateway an account has a key for.
+// Package gateway puts a question to a model, through the service an account has a key for.
 //
 // Split from the store on the same seam as [btw/internal/mail]: nothing here touches the
-// database. OpenRouter rather than a vendor directly, so the difference between two models is a
-// string and the choice can be a form field.
-package openrouter
+// database. A router rather than a model vendor directly, so the difference between two models
+// is a string and the choice can be a form field. Which router is [Provider].
+package gateway
 
 import (
 	"bytes"
@@ -22,11 +22,14 @@ import (
 
 const Endpoint = "https://openrouter.ai/api/v1/chat/completions"
 
-// DefaultModel is the fallback under an instance's own, which is what an account gets when
-// neither has been set. Free, so this can be tried without a balance. The `:free` variants
-// accept far fewer parameters than the paid slug of the same model — no `structured_outputs` —
-// so anything wanting a strict schema has to check.
+// DefaultModel is OpenRouter's compiled-in model, under an instance's own. Free, so this can be
+// tried without a balance. The `:free` variants accept far fewer parameters than the paid slug
+// of the same model — no `structured_outputs` — so anything wanting a strict schema has to
+// check.
 const DefaultModel = "minimax/minimax-m3:free"
+
+// HuggingFaceModel is the same for the Hugging Face router.
+const HuggingFaceModel = "deepseek-ai/DeepSeek-V4.1-Flash"
 
 // ErrRateLimited is the one refusal that passes on its own. A sentinel, because a loop that
 // cannot tell it from the rest either hammers an exhausted quota or gives up on a good key.
@@ -36,19 +39,31 @@ var ErrRateLimited = errors.New("rate limited")
 // cap, so a dead gateway does not hold the request until the browser gives up first.
 const Timeout = 60 * time.Second
 
-// endpoint is where requests go. A var only so a test can point it at a server of its own.
-var endpoint = Endpoint
+// override stands in for every provider's address at once. A var only so a test can point them
+// at a server of its own.
+var override string
 
-// SetEndpoint replaces where requests go and returns a function putting the old one back. For
+// SetEndpoint sends every provider to u and returns a function putting the addresses back. For
 // tests; exported because the handler deciding which key to try is in another package.
 func SetEndpoint(u string) func() {
-	old := endpoint
-	endpoint = u
-	return func() { endpoint = old }
+	old := override
+	override = u
+	return func() { override = old }
+}
+
+func (p Provider) address() string {
+	if override != "" {
+		return override
+	}
+	return p.Endpoint()
 }
 
 // Settings are the companion as somebody configured it. Carries the key.
 type Settings struct {
+	// Provider is which service the key is for. Empty means [DefaultProvider], which is what a
+	// row written before there were two holds.
+	Provider Provider
+
 	APIKey string
 
 	// Model is what the account chose, or empty for whatever the default is now. Empty is a
@@ -67,12 +82,13 @@ type Settings struct {
 }
 
 func (s Settings) ModelOrDefault() string {
-	for _, m := range []string{s.Model, s.Default, DefaultModel} {
+	fallback := s.Provider.OrDefault().DefaultModel()
+	for _, m := range []string{s.Model, s.Default, fallback} {
 		if m != "" {
 			return m
 		}
 	}
-	return DefaultModel
+	return fallback
 }
 
 // Configured is the key alone: a key without an About still answers, worse than it would with
@@ -96,31 +112,7 @@ type Result struct {
 	reply string
 }
 
-// Check asks the model to say one word, and reports what came back.
-//
-// A real completion rather than `GET /api/v1/key`, which would prove the key is live and
-// nothing about the model — the half somebody is likelier to get wrong. One completion proves
-// both, and on the default model it costs nothing.
-func Check(ctx context.Context, set Settings, via proxy.Settings) (Result, error) {
-	if !set.Configured() {
-		return Result{}, errors.New("there is no key to check")
-	}
-
-	body := map[string]any{
-		"model": set.ModelOrDefault(),
-		// Small, but a reasoning model's thinking counts against the same ceiling, so not so
-		// small that the reply is cut off before it starts.
-		"max_tokens": 200,
-		"reasoning":  map[string]any{"exclude": true},
-		"messages": []map[string]string{
-			{"role": "user", "content": "Reply with the single word: ok"},
-		},
-	}
-	return post(ctx, set.APIKey, body, via)
-}
-
-// Ask puts a prompt to the configured model and returns what it said — the general form of
-// [Check].
+// Ask puts a prompt to the configured model and returns what it said.
 //
 // JSON mode rather than a strict schema: a `:free` variant advertises `response_format` without
 // `structured_outputs`, so asking for a schema it cannot honour gets prose back from a request
@@ -133,9 +125,6 @@ func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user str
 	body := map[string]any{
 		"model":      set.ModelOrDefault(),
 		"max_tokens": maxTokens,
-		// A reasoning model otherwise leaks its thinking into the content, which is the
-		// likeliest reason a JSON answer fails to parse.
-		"reasoning": map[string]any{"exclude": true},
 		// Low, not zero: this is extraction, not invention.
 		"temperature": 0.2,
 		// Fresh every time, deliberately. A fixed seed would put a reminder wrongly in the same
@@ -147,8 +136,10 @@ func Ask(ctx context.Context, set Settings, via proxy.Settings, system, user str
 			{"role": "user", "content": user},
 		},
 	}
+	provider := set.Provider.OrDefault()
+	provider.tune(body)
 
-	res, err := post(ctx, set.APIKey, body, via)
+	res, err := post(ctx, provider, set.APIKey, body, via)
 	if err != nil {
 		return "", Result{}, err
 	}
@@ -182,7 +173,7 @@ type fault struct {
 	Message string `json:"message"`
 }
 
-func post(ctx context.Context, key string, body map[string]any, via proxy.Settings) (Result, error) {
+func post(ctx context.Context, p Provider, key string, body map[string]any, via proxy.Settings) (Result, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return Result{}, fmt.Errorf("encode request: %w", err)
@@ -191,7 +182,7 @@ func post(ctx context.Context, key string, body map[string]any, via proxy.Settin
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.address(), bytes.NewReader(encoded))
 	if err != nil {
 		return Result{}, fmt.Errorf("build request: %w", err)
 	}

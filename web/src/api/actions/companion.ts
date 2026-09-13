@@ -17,8 +17,24 @@ export type Advice = {
   stale: boolean;
 };
 
+/** One of the services a key can be for. */
+export type Service = {
+  id: string;
+  label: string;
+  /** Where somebody goes to get a key, which is what the form is really asking for. */
+  keys_url: string;
+  key_example: string;
+  /** What a blank model field falls through to on this service — the administrator's, or the
+   * one the build ships with. */
+  default_model: string;
+};
+
 export type Companion = {
   configured: boolean;
+  /** Which service the stored key is for. */
+  provider: string;
+  /** All of them, so the form can name one without knowing any of them itself. */
+  providers: Service[];
   model: string;
   /**
    * Whether a key is stored. The key itself never comes back out — see docs/companion.md —
@@ -35,6 +51,7 @@ export type Companion = {
 };
 
 export type CompanionEdit = {
+  provider: string;
   api_key: string;
   model: string;
   about: string;
@@ -65,6 +82,7 @@ export const deleteCompanion = () =>
  * tried is what saving would store.
  */
 export const postCompanionTest = (attempt: {
+  provider: string;
   api_key: string;
   model: string;
 }) =>

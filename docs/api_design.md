@@ -230,9 +230,10 @@ GET    /api/admin/proxy                  {configured, kind, url, username, token
 PUT    /api/admin/proxy                  {kind, url, username, token} → the above
 PATCH  /api/admin/proxy                  {enabled} → the above
 DELETE /api/admin/proxy                  → 204
-POST   /api/admin/proxy/test             {} → {reached, took_ms}
-GET    /api/admin/companion              {model, fallback_model, model_limit}
-PUT    /api/admin/companion              {model} → the above
+POST   /api/admin/proxy/test             {} → {reached: [{label, url}], took_ms}
+GET    /api/admin/companion              {providers: [{provider, label, model,
+                                          fallback_model}], model_limit}
+PUT    /api/admin/companion              {provider, model} → the above
 ```
 
 An administrator's, unlike the companion below it: how this machine reaches the internet is one
@@ -254,9 +255,9 @@ proxio that ends in the token.
 ### Companion
 
 ```
-GET    /api/companion                    {configured, model, key_set, about, default_model,
-                                          about_limit, advice?}
-PUT    /api/companion                    {api_key, model, about} → the above
+GET    /api/companion                    {configured, provider, providers, model, key_set,
+                                          about, default_model, about_limit, advice?}
+PUT    /api/companion                    {provider, api_key, model, about} → the above
 DELETE /api/companion                    → 204
 POST   /api/companion/test               {} → {model, tokens, read, shapes}
 GET    /api/companion/advice             {reminders: [{id, text, advised, categories?,
@@ -294,9 +295,17 @@ does come back, because it is a text field somebody edits.
 `/api/admin/companion` when one is set, and the compiled-in one otherwise — so the placeholder
 cannot offer one model while the loop uses another.
 
-`PUT /api/admin/companion` is not checked against OpenRouter and could not be: the instance has
+`PUT /api/admin/companion` is not checked against the router and could not be: the instance has
 no key of its own. An empty `model` clears it. It exists because slugs are retired, and without
-it the day the compiled-in model goes every account that never chose one breaks at once.
+it the day a compiled-in model goes every account that never chose one breaks at once.
+
+**One default per service**, because a slug belongs to one. `providers` carries every service
+with the model it falls back to, so a form can name one without knowing any of them itself.
+
+`provider` on `/api/companion` is `openrouter` or `huggingface`, and is the account's: a key
+works with one of them and not the other. `providers` comes back with each one's label, where
+its keys come from, what one looks like and what a blank model field would ask on it — so the
+form repaints when the select changes rather than holding a second copy of any of it.
 
 `POST /api/companion/test` puts the real question — with a made-up list, so it works before
 anything is written down — and parses the answer. `read` is `all`, `some` or `none`, and

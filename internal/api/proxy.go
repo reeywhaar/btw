@@ -2,21 +2,23 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 
+	"btw/internal/gateway"
 	"btw/internal/proxy"
 )
 
-// probeTarget is what a test press actually reaches for.
+// A test press reaches the gateways themselves, on the one route each that needs no key.
 //
-// The gateway itself, and its one route that needs no key. A proxy here exists for exactly one
-// destination, so testing against anything else — an address somebody types, a service that
-// echoes an IP — would prove a proxy works and leave the only question that matters unanswered.
-// It is also the honest failure: a proxy that reaches everything except OpenRouter is a proxy
-// somebody would otherwise have called working.
-const probeTarget = "https://openrouter.ai/api/v1/models"
+// Testing against anything else — an address somebody types, a service that echoes an IP —
+// would prove a proxy works and leave the only question that matters unanswered: a proxy that
+// reaches everything except the gateway is one somebody would otherwise have called working.
+//
+// Every service, because they are separate hosts and are blocked separately. An account on the
+// one that cannot be reached is not helped by the other one answering.
 
 // probeTimeout bounds one test press. Short, because somebody is watching it.
 const probeTimeout = 30 * time.Second
@@ -144,21 +146,34 @@ func (s *Server) testProxy(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeTarget, nil)
-	if err != nil {
-		s.fail(w, r, err)
-		return
+	started := time.Now()
+	reached := make([]map[string]any, 0, len(gateway.Providers()))
+	for _, p := range gateway.Providers() {
+		if err := reach(ctx, p.ProbeTarget(), set); err != nil {
+			// 502 rather than 500, for the reason docs/mail.md gives about a refused send:
+			// everything on this side worked and something upstream did not. The message has
+			// already had any address scrubbed out of it — see proxy.Send.
+			s.log.Warn("proxy test failed", "kind", set.Kind, "service", p, "err", err)
+			writeError(w, http.StatusBadGateway, p.Label()+": "+err.Error())
+			return
+		}
+		reached = append(reached, map[string]any{"label": p.Label(), "url": p.ProbeTarget()})
 	}
 
-	started := time.Now()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"reached": reached,
+		"took_ms": time.Since(started).Milliseconds(),
+	})
+}
+
+func reach(ctx context.Context, target string, set proxy.Settings) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return err
+	}
 	resp, err := proxy.Send(ctx, req, set)
 	if err != nil {
-		// 502 rather than 500, for the reason docs/mail.md gives about a refused send:
-		// everything on this side worked and something upstream did not. The message has
-		// already had any address scrubbed out of it — see proxy.Send.
-		s.log.Warn("proxy test failed", "kind", set.Kind, "err", err)
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
+		return err
 	}
 	defer resp.Body.Close()
 	// Read and discarded, bounded: the answer is a long list of models and nothing here wants
@@ -169,12 +184,7 @@ func (s *Server) testProxy(w http.ResponseWriter, r *http.Request) {
 		// A proxy that answers but hands back a refusal is not working, whatever the transport
 		// did. Saying so with the status is what tells an operator whether to look at the
 		// proxy or at the gateway.
-		writeError(w, http.StatusBadGateway,
-			"the proxy was reached and the gateway answered "+resp.Status)
-		return
+		return errors.New("the proxy was reached and the gateway answered " + resp.Status)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"reached": probeTarget,
-		"took_ms": time.Since(started).Milliseconds(),
-	})
+	return nil
 }

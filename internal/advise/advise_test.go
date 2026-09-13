@@ -11,20 +11,20 @@ import (
 	"testing"
 	"time"
 
-	"btw/internal/openrouter"
+	"btw/internal/gateway"
 	"btw/internal/store"
 )
 
-// gateway stands in for OpenRouter over a real loopback socket, for the reason
-// internal/openrouter's own tests use one: what is worth asserting is the conversation.
-type gateway struct {
+// upstream stands in for OpenRouter over a real loopback socket, for the reason
+// internal/gateway's own tests use one: what is worth asserting is the conversation.
+type upstream struct {
 	asked  int
 	prompt string
 	reply  string
 	status int
 }
 
-func (g *gateway) start(t *testing.T) {
+func (g *upstream) start(t *testing.T) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -43,7 +43,7 @@ func (g *gateway) start(t *testing.T) {
 			"choices":[{"finish_reason":"stop","message":{"content":`+quote(g.reply)+`}}]}`)
 	}))
 	t.Cleanup(srv.Close)
-	t.Cleanup(openrouter.SetEndpoint(srv.URL))
+	t.Cleanup(gateway.SetEndpoint(srv.URL))
 }
 
 func quote(s string) string {
@@ -78,13 +78,13 @@ func person(t *testing.T, st *store.Store, name string) store.Principal {
 }
 
 func TestOneQuestionCoversEverybodysReminders(t *testing.T) {
-	g := &gateway{}
+	g := &upstream{}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	if err := st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", About: "I sleep until noon"}); err != nil {
+	if err := st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k", About: "I sleep until noon"}); err != nil {
 		t.Fatalf("SetCompanion(): %v", err)
 	}
 	show, _ := st.CreateReminder(ctx, p.ID, "watch rick and morty")
@@ -131,13 +131,13 @@ func TestOneQuestionCoversEverybodysReminders(t *testing.T) {
 // Every write that could change an answer says so, and nothing else does. Nudging a reminder
 // changes when it was last raised and not what it is about.
 func TestOnlyAChangeWorthAskingAboutMakesItStale(t *testing.T) {
-	g := &gateway{reply: `{"results":[]}`}
+	g := &upstream{reply: `{"results":[]}`}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	rem, _ := st.CreateReminder(ctx, p.ID, "water the plants")
 
 	adviser(st).Once(ctx)
@@ -163,7 +163,7 @@ func TestOnlyAChangeWorthAskingAboutMakesItStale(t *testing.T) {
 }
 
 func TestNobodyIsAskedOnBehalfOfAnAccountWithNoCompanion(t *testing.T) {
-	g := &gateway{reply: `{"results":[]}`}
+	g := &upstream{reply: `{"results":[]}`}
 	g.start(t)
 
 	st := newStore(t)
@@ -180,13 +180,13 @@ func TestNobodyIsAskedOnBehalfOfAnAccountWithNoCompanion(t *testing.T) {
 // Asking would spend one of fifty daily requests to be told there is nothing to say. Marked
 // answered rather than left stale, or the account is revisited every pass forever.
 func TestAnAccountWithNoRemindersCostsNoQuestion(t *testing.T) {
-	g := &gateway{reply: `{"results":[]}`}
+	g := &upstream{reply: `{"results":[]}`}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 
 	adviser(st).Once(ctx)
 	adviser(st).Once(ctx)
@@ -201,13 +201,13 @@ func TestAnAccountWithNoRemindersCostsNoQuestion(t *testing.T) {
 // A failure is not an answer. Clearing the flag would mean a key that stopped working quietly
 // froze the advice at whatever it last said, with nothing to show for it.
 func TestAFailedQuestionIsRememberedAndTriedAgain(t *testing.T) {
-	g := &gateway{status: http.StatusUnauthorized}
+	g := &upstream{status: http.StatusUnauthorized}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "wrong"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "wrong"})
 	st.CreateReminder(ctx, p.ID, "water the plants")
 
 	adviser(st).Once(ctx)
@@ -224,13 +224,13 @@ func TestAFailedQuestionIsRememberedAndTriedAgain(t *testing.T) {
 // The reminder text is the one thing in this database somebody would mind being read. It goes
 // to the model because that is the point, and it must not also end up anywhere else.
 func TestAdviceNeverSilencesAnythingItCannotPlace(t *testing.T) {
-	g := &gateway{}
+	g := &upstream{}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	rem, _ := st.CreateReminder(ctx, p.ID, "the model has no idea when to do this")
 	g.reply = `{"results":[{"id":"` + rem.ID + `","category":[],"exclusive":true,"curve":` + curve(0) + `}]}`
 
@@ -281,13 +281,13 @@ func TestTheQuestionCarriesTheWakingHoursAndTheNote(t *testing.T) {
 // A quota is not a mistake, and it is recorded as its own kind so the interface can say "it
 // will try again" instead of sending somebody to check a key that is fine.
 func TestARateLimitIsRememberedAsAQuotaAndNotAsABrokenKey(t *testing.T) {
-	g := &gateway{status: http.StatusTooManyRequests}
+	g := &upstream{status: http.StatusTooManyRequests}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	st.CreateReminder(ctx, p.ID, "water the plants")
 
 	adviser(st).Once(ctx)
@@ -303,7 +303,7 @@ func TestARateLimitIsRememberedAsAQuotaAndNotAsABrokenKey(t *testing.T) {
 		t.Error("a rate limit was treated as an answer")
 	}
 	if state.Error == "" {
-		t.Error("the gateway's own words were not kept")
+		t.Error("the upstream's own words were not kept")
 	}
 }
 
@@ -323,13 +323,13 @@ func TestOneExhaustedKeyDoesNotStopTheRest(t *testing.T) {
 		io.WriteString(w, `{"model":"m","choices":[{"finish_reason":"stop","message":{"content":"{\"results\":[]}"}}]}`)
 	}))
 	defer srv.Close()
-	defer openrouter.SetEndpoint(srv.URL)()
+	defer gateway.SetEndpoint(srv.URL)()
 
 	st := newStore(t)
 	ctx := context.Background()
 	for _, who := range []struct{ name, key string }{{"aaa", "spent"}, {"zzz", "fine"}} {
 		p := person(t, st, who.name)
-		st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: who.key})
+		st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: who.key})
 		st.CreateReminder(ctx, p.ID, "water the plants")
 	}
 
@@ -347,13 +347,13 @@ func TestOneExhaustedKeyDoesNotStopTheRest(t *testing.T) {
 // takes the advice with it. Finishing with a reminder does not: it can be revived, and what
 // was said about it is still true.
 func TestAdviceOutlivesADoneReminderAndNotADeletedOne(t *testing.T) {
-	g := &gateway{}
+	g := &upstream{}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	kept, _ := st.CreateReminder(ctx, p.ID, "water the plants")
 	gone, _ := st.CreateReminder(ctx, p.ID, "call the dentist")
 
@@ -405,13 +405,13 @@ func (a *alerts) Alert(_ context.Context, principalID, title, text string) (int,
 
 func broken(t *testing.T, status int) (*store.Store, store.Principal, *alerts) {
 	t.Helper()
-	g := &gateway{status: status}
+	g := &upstream{status: status}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	st.CreateReminder(ctx, p.ID, "water the plants")
 	// Midday, inside the default waking window. Pinned rather than left to the wall clock:
 	// alerting is refused outside somebody's waking hours, so an unpinned clock makes every
@@ -433,7 +433,7 @@ func TestABrokenKeyIsPushedOnceAndNotEveryPass(t *testing.T) {
 		t.Fatalf("sent %v, want one message", sent.sent)
 	}
 	if !strings.Contains(sent.sent[0], "Unauthorized") {
-		t.Errorf("message = %q, want the gateway's own words", sent.sent[0])
+		t.Errorf("message = %q, want the upstream's own words", sent.sent[0])
 	}
 
 	// The loop runs every half hour and a broken key fails every pass. Without the flag this
@@ -520,13 +520,13 @@ func TestAnUndeliveredAlertIsSentAgain(t *testing.T) {
 // Stale advice is worth more than none: without this a model that mangles one reminder out of
 // forty costs it everything it had until some later round happens to get it right.
 func TestAnAnswerThatCouldNotBeReadKeepsTheOneBeforeIt(t *testing.T) {
-	g := &gateway{}
+	g := &upstream{}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	kept, _ := st.CreateReminder(ctx, p.ID, "wash dishes")
 	fresh, _ := st.CreateReminder(ctx, p.ID, "go to circus")
 
@@ -577,13 +577,13 @@ func TestAnAnswerThatCouldNotBeReadKeepsTheOneBeforeIt(t *testing.T) {
 // The distinction the carrying-forward hangs on. A model that deliberately says "no shape" has
 // to overwrite; only an answer that failed or never arrived is kept.
 func TestADeliberateNoOpinionStillReplacesWhatCameBefore(t *testing.T) {
-	g := &gateway{}
+	g := &upstream{}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	rem, _ := st.CreateReminder(ctx, p.ID, "wash dishes")
 
 	g.reply = `{"results":[{"id":"` + rem.ID + `","curve":[{"days":"all","from":"20:00","to":"23:00","v":0.9}]}]}`
@@ -602,13 +602,13 @@ func TestADeliberateNoOpinionStillReplacesWhatCameBefore(t *testing.T) {
 // A reminder the model omitted entirely is the same case: its advice was not withdrawn, the
 // answer simply did not mention it.
 func TestAReminderLeftOutOfTheAnswerKeepsWhatItHad(t *testing.T) {
-	g := &gateway{}
+	g := &upstream{}
 	g.start(t)
 
 	st := newStore(t)
 	ctx := context.Background()
 	p := person(t, st, "misha")
-	st.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"})
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
 	rem, _ := st.CreateReminder(ctx, p.ID, "wash dishes")
 
 	g.reply = `{"results":[{"id":"` + rem.ID + `","curve":[{"days":"all","from":"20:00","to":"23:00","v":0.9}]}]}`

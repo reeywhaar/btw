@@ -17,7 +17,7 @@ import (
 	"log/slog"
 	"time"
 
-	"btw/internal/openrouter"
+	"btw/internal/gateway"
 	"btw/internal/rhythm"
 	"btw/internal/store"
 )
@@ -116,7 +116,7 @@ func (a *Adviser) Look(ctx context.Context, id string) error {
 
 	// Recorded against the account as well as logged, so somebody whose key stopped working can
 	// be told. The flag stays set, so the next pass tries again.
-	limited := errors.Is(err, openrouter.ErrRateLimited)
+	limited := errors.Is(err, gateway.ErrRateLimited)
 	a.Log.Warn("could not advise", "principal", id, "limited", limited, "err", err)
 	if err := a.Store.RecordAdviceFailure(ctx, id, a.Store.Now(), err.Error(), limited); err != nil {
 		a.Log.Error("could not record an advice failure", "principal", id, "err", err)
@@ -169,7 +169,7 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	ctx, cancel := context.WithTimeout(ctx, askTimeout)
 	defer cancel()
 
-	reply, res, err := openrouter.Ask(ctx, set, via, System(), question, budget(len(reminders)))
+	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(len(reminders)))
 	if err != nil {
 		return err
 	}

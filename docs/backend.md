@@ -16,7 +16,7 @@ internal/
   rhythm/            when somebody is nudged — pure
   pick/              what the nudge carries — pure
   webpush/           VAPID, RFC 8291 encryption, one POST
-  openrouter/        one question, put to the model an account has a key for
+  gateway/           one question, put to the model an account has a key for
   proxy/             the two ways of reaching it from somewhere else
   advise/            asks the companion about somebody's reminders — the impure half
   nudge/             the scheduler: the impure half
@@ -136,10 +136,14 @@ Everything about handing one encrypted message to one push service. See [push.md
 It knows nothing about reminders, nudges or accounts: it takes a `Subscription` and a byte
 slice. That is what lets its tests be RFC vectors rather than fixtures.
 
-## `internal/openrouter`
+## `internal/gateway`
 
-One question, put to the gateway an account has a key for. See
+One question, put to the service an account has a key for. See
 [companion.md](companion.md).
+
+Two services, OpenRouter and the Hugging Face router, both speaking OpenAI's chat completions —
+so `Provider` carries what actually differs: the address, the model names and which optional
+fields are safe to send.
 
 The same seam as `internal/mail`: the store decides what the companion *is* and holds its key,
 and this is the half that opens a socket. Nothing here touches the database, and nothing in the
@@ -159,7 +163,7 @@ rather than a mocked `http.Client` — which would assert that `net/http` was ca
 worth asserting is that a POST body survives the trip and that a credential never reaches a log
 line.
 
-Only `internal/openrouter` sends through it, because it is the only thing here that reaches the
+Only `internal/gateway` sends through it, because it is the only thing here that reaches the
 open internet at all.
 
 ## `internal/advise`
@@ -207,7 +211,7 @@ not delay the laptop's, and other people's slots are waiting behind this pass.
   round trip is in [push.md](push.md#the-test-vector-is-the-point).
 - `nudge` is tested end to end against a fake push service holding a real subscription
   keypair, so "a reminder arrives" is asserted by decrypting one.
-- `openrouter` is tested against a real server on a loopback port, because the case that looks
+- `gateway` is tested against a real server on a loopback port, because the case that looks
   most like success — a fault delivered inside a `200` — is the one a mock would never catch.
 - One test asserts no `Access-Control-Allow-Origin` is ever emitted, because that absence is a
   security property.

@@ -16,7 +16,7 @@ import (
 	"testing/fstest"
 
 	"btw/internal/config"
-	"btw/internal/openrouter"
+	"btw/internal/gateway"
 	"btw/internal/store"
 	"btw/internal/webpush"
 )
@@ -914,7 +914,7 @@ func TestTheKeyInTheDialogIsTriedAndNotTheStoredOne(t *testing.T) {
 		io.WriteString(w, `{"model":"m","choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":3}}`)
 	}))
 	defer srv.Close()
-	defer openrouter.SetEndpoint(srv.URL)()
+	defer gateway.SetEndpoint(srv.URL)()
 
 	h := newHarness(t)
 	p := h.signIn()
@@ -1514,7 +1514,7 @@ func TestTheTestPressPutsTheRealQuestionAndReadsTheAnswer(t *testing.T) {
 		fmt.Fprintf(w, `{"model":"m","choices":[{"message":{"content":%q}}],"usage":{"total_tokens":7}}`, answer)
 	}))
 	defer srv.Close()
-	defer openrouter.SetEndpoint(srv.URL)()
+	defer gateway.SetEndpoint(srv.URL)()
 
 	h := newHarness(t)
 	h.signIn()
@@ -1552,5 +1552,66 @@ func TestTheTestPressPutsTheRealQuestionAndReadsTheAnswer(t *testing.T) {
 	decodeBody(t, h.do("POST", "/api/companion/test", map[string]any{}), &out)
 	if out.Read != "none" || len(out.Shapes) == 0 {
 		t.Errorf("read = %q, shapes = %v, want the shape named", out.Read, out.Shapes)
+	}
+}
+
+// A key works with one service and not the other, so the choice travels with the key — and a
+// default belongs to a service too.
+func TestAnAccountChoosesItsServiceAndGetsThatServicesDefault(t *testing.T) {
+	h := newHarness(t)
+	h.signInAs("boss", store.RoleAdmin)
+	h.do("PUT", "/api/admin/companion", map[string]any{
+		"provider": "openrouter", "model": "openai/gpt-5",
+	}).Body.Close()
+	h.do("PUT", "/api/admin/companion", map[string]any{
+		"provider": "huggingface", "model": "meta-llama/Llama-4-Instruct",
+	}).Body.Close()
+
+	h.signInAs("ordinary", store.RoleUser)
+	var body struct {
+		Provider     string `json:"provider"`
+		DefaultModel string `json:"default_model"`
+		Providers    []struct {
+			ID           string `json:"id"`
+			Label        string `json:"label"`
+			DefaultModel string `json:"default_model"`
+			KeyExample   string `json:"key_example"`
+		} `json:"providers"`
+	}
+
+	// Before anything is saved, and after: an account that never said is on the default one.
+	decodeBody(t, h.do("GET", "/api/companion", nil), &body)
+	if body.Provider != "openrouter" {
+		t.Errorf("provider = %q, want the default before anything is chosen", body.Provider)
+	}
+	if len(body.Providers) != 2 {
+		t.Fatalf("providers = %d, want both offered", len(body.Providers))
+	}
+	// Each carries its own, so the form repaints when the select changes without knowing any
+	// model name of its own.
+	for _, p := range body.Providers {
+		if p.DefaultModel == "" || p.Label == "" || p.KeyExample == "" {
+			t.Errorf("%s is missing what the form needs: %+v", p.ID, p)
+		}
+	}
+
+	h.do("PUT", "/api/companion", map[string]any{
+		"provider": "huggingface", "api_key": "hf_key",
+	}).Body.Close()
+	decodeBody(t, h.do("GET", "/api/companion", nil), &body)
+	if body.Provider != "huggingface" {
+		t.Errorf("provider = %q, want the one that was chosen", body.Provider)
+	}
+	if body.DefaultModel != "meta-llama/Llama-4-Instruct" {
+		t.Errorf("default_model = %q, want this service's own", body.DefaultModel)
+	}
+
+	// A service nobody can ask is refused rather than quietly falling back to one that works.
+	resp := h.do("PUT", "/api/companion", map[string]any{
+		"provider": "anthropic", "api_key": "k",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("PUT with an unknown service = %s, want 400", resp.Status)
 	}
 }

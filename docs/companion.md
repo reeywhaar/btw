@@ -1,7 +1,22 @@
 # Companion
 
-btw runs no model. It puts a question to one an account has a key for, through OpenRouter, and
+btw runs no model. It puts a question to one an account has a key for, through a router, and
 everything here is about where that key lives and what the model is told.
+
+## Two services
+
+**OpenRouter** and the **Hugging Face router**. Both speak OpenAI's chat completions, so what
+differs is small and lives in one type: the address, the model names, and which optional fields
+are safe to send.
+
+The choice is the **account's**, beside the key, because a key works with one of them and not
+the other — picking the service instance-wide would strand anybody holding the wrong kind. A row
+written before there were two reads as OpenRouter, which is what it was.
+
+`reasoning: {exclude}` is OpenRouter's own field and is sent only there. The Hugging Face router
+hands the body to whichever provider serves the model, and a field one of them rejects is a
+`400` nobody can explain from the message. `response_format`, `seed` and `temperature` go to
+both.
 
 ## The companion is an account's, not the instance's
 
@@ -44,17 +59,27 @@ cheap to run.
 
 ## The default model
 
-`minimax/minimax-m3:free`, so somebody who has just found this feature can try it without a
-balance.
+One per service, because a slug belongs to one: `minimax/minimax-m3:free` on OpenRouter,
+`deepseek-ai/DeepSeek-V4.1-Flash` on Hugging Face. An administrator can replace either — see
+[the escape hatch](#an-administrators-default), which exists because routers retire slugs.
 
-The `:free` variants accept **far fewer parameters** than the paid slug of the same name —
-`response_format` but not `structured_outputs`, no `stop`, no `top_k`, none of the penalties.
-Anything asking for a strict schema has to check rather than assume, or it gets prose back from
-a request that looked like it demanded otherwise.
+OpenRouter's `:free` variants accept **far fewer parameters** than the paid slug of the same
+name — `response_format` but not `structured_outputs`, no `stop`, no `top_k`, none of the
+penalties. Anything asking for a strict schema has to check rather than assume, or it gets prose
+back from a request that looked like it demanded otherwise.
 
-Free keys allow **20 requests a minute and 50 a day**, or 1000 once $10 of credit has been
-bought. That is the ceiling on how often anything here may run, and the reason a `429` is
+Free OpenRouter keys allow **20 requests a minute and 50 a day**, or 1000 once $10 of credit has
+been bought. That is the ceiling on how often anything here may run, and the reason a `429` is
 reported as its own kind of refusal.
+
+### An administrator's default
+
+`/admin` holds one model per service, and an account that never chose one follows it. Empty
+means the model the build ships with.
+
+It is not checked, and could not be: the instance has no key of its own, and the only thing that
+settles whether a slug works is an account using it. The first companion to try reports what the
+gateway said.
 
 ## Trying it
 

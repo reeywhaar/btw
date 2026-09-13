@@ -1,6 +1,6 @@
 # Proxies
 
-btw reaches exactly one thing on the open internet: the gateway an account's
+btw reaches one kind of thing on the open internet: the service an account's
 [companion](companion.md) has a key for. Some networks cannot. A proxy is somewhere else to ask
 from.
 
@@ -12,8 +12,9 @@ An administrator configures one at `/admin`. Nothing is on by default and nothin
 same address, so a filter that blocks this instance blocks the proxy identically. It tests fine
 against anything unrestricted and never once helps.
 
-That is why the test press fetches **the gateway itself** rather than an address somebody types.
-A proxy that reaches everything except OpenRouter is one somebody would otherwise have called
+That is why the test press fetches **the gateways themselves** rather than an address somebody
+types — every service, since they are separate hosts and are blocked separately. A proxy that
+reaches everything except the one an account is on is one somebody would otherwise have called
 working.
 
 ## Why the word is not "relay"
@@ -23,10 +24,10 @@ btw already has one: the SMTP relay, with a table, a settings block, four routes
 
 ## One proxy, and no ladder
 
-btw makes a handful of requests an hour to a single host in a loop nothing is waiting on. A
-chain to try in turn would guard a cost that does not exist, and would turn a proxy that has
-quietly stopped working into something the program routes around rather than something somebody
-fixes. Nothing is remembered about what worked, for the same reason.
+btw makes a handful of requests an hour in a loop nothing is waiting on. A chain to try in turn
+would guard a cost that does not exist, and would turn a proxy that has quietly stopped working
+into something the program routes around rather than something somebody fixes. Nothing is
+remembered about what worked, for the same reason.
 
 ## On and off is not the same as gone
 
@@ -94,5 +95,5 @@ Three places would otherwise write one down, and each has a test.
 | `internal/api/proxy.go`           | `/api/admin/proxy`, including the test           |
 | `web/src/islands/admin/Proxy.tsx` | the screen                                       |
 
-Only `internal/openrouter` sends anything through it. Web Push goes to whatever endpoint a
+Only `internal/gateway` sends anything through it. Web Push goes to whatever endpoint a
 browser handed us and mail goes to the relay, and neither is a host anybody is blocked from.

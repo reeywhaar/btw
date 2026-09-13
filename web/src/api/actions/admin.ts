@@ -55,7 +55,11 @@ export type ProxyEdit = {
   token: string;
 };
 
-export type ProxyTest = { reached: string; took_ms: number };
+export type ProxyTest = {
+  /** Every service it got to. They are separate hosts and are blocked separately. */
+  reached: { label: string; url: string }[];
+  took_ms: number;
+};
 
 export const getAdminProxy = () => request<Proxy>("/api/admin/proxy");
 
@@ -73,18 +77,25 @@ export const postAdminProxyTest = () =>
   request<ProxyTest>("/api/admin/proxy/test", { method: "POST", body: {} });
 
 /** The model every account that never chose one follows. */
-export type DefaultModel = {
+/** One service's default model. A slug belongs to a service, so there is one of these each. */
+export type ServiceDefault = {
+  provider: string;
+  label: string;
   model: string;
   /** What a blank falls through to, so the form need not name a model of its own. */
   fallback_model: string;
+};
+
+export type DefaultModel = {
+  providers: ServiceDefault[];
   model_limit: number;
 };
 
 export const getAdminDefaultModel = () =>
   request<DefaultModel>("/api/admin/companion");
 
-export const putAdminDefaultModel = (model: string) =>
+export const putAdminDefaultModel = (provider: string, model: string) =>
   request<DefaultModel>("/api/admin/companion", {
     method: "PUT",
-    body: { model },
+    body: { provider, model },
   });

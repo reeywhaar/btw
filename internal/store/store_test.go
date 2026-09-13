@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"btw/internal/gateway"
 	"btw/internal/mail"
-	"btw/internal/openrouter"
 	"btw/internal/proxy"
 )
 
@@ -658,11 +658,11 @@ func TestACompanionNeedsAKey(t *testing.T) {
 	p := testPrincipal(t, s)
 	ctx := context.Background()
 
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{Model: "m"}); !errors.Is(err, ErrInvalid) {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{Model: "m"}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("SetCompanion(no key) = %v, want ErrInvalid", err)
 	}
 
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "  sk-or-v1-abc  "}); err != nil {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "  sk-or-v1-abc  "}); err != nil {
 		t.Fatalf("SetCompanion(): %v", err)
 	}
 	got, err := s.Companion(ctx, p.ID)
@@ -682,7 +682,7 @@ func TestAModelNobodyChoseStaysUnchosen(t *testing.T) {
 	p := testPrincipal(t, s)
 	ctx := context.Background()
 
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"}); err != nil {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"}); err != nil {
 		t.Fatalf("SetCompanion(): %v", err)
 	}
 	got, err := s.Companion(ctx, p.ID)
@@ -694,8 +694,8 @@ func TestAModelNobodyChoseStaysUnchosen(t *testing.T) {
 	}
 	// And it is still the default that gets asked, resolved at the moment of asking rather
 	// than written down.
-	if got.ModelOrDefault() != openrouter.DefaultModel {
-		t.Errorf("ModelOrDefault() = %q, want %q", got.ModelOrDefault(), openrouter.DefaultModel)
+	if got.ModelOrDefault() != gateway.DefaultModel {
+		t.Errorf("ModelOrDefault() = %q, want %q", got.ModelOrDefault(), gateway.DefaultModel)
 	}
 
 	// Saving again does not turn the blank into a choice, which is the loop that pinned it.
@@ -707,11 +707,11 @@ func TestAModelNobodyChoseStaysUnchosen(t *testing.T) {
 	}
 
 	// A model somebody did type is kept, default or not.
-	chosen := openrouter.Settings{APIKey: "k", Model: openrouter.DefaultModel}
+	chosen := gateway.Settings{APIKey: "k", Model: gateway.DefaultModel}
 	if err := s.SetCompanion(ctx, p.ID, chosen); err != nil {
 		t.Fatalf("SetCompanion(chosen): %v", err)
 	}
-	if got, _ := s.Companion(ctx, p.ID); got.Model != openrouter.DefaultModel {
+	if got, _ := s.Companion(ctx, p.ID); got.Model != gateway.DefaultModel {
 		t.Errorf("Model = %q, want the one that was typed", got.Model)
 	}
 }
@@ -727,12 +727,12 @@ func TestAboutIsBoundedAndCountedInRunes(t *testing.T) {
 	// Georgian, so a byte limit would refuse this and a rune limit accepts it. A paragraph
 	// is not four times as long for being written in a four-byte script.
 	fits := strings.Repeat("ა", AboutLimit)
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", About: fits}); err != nil {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k", About: fits}); err != nil {
 		t.Errorf("SetCompanion(%d runes) = %v, want it accepted", AboutLimit, err)
 	}
 
 	tooMuch := strings.Repeat("a", AboutLimit+1)
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", About: tooMuch}); !errors.Is(err, ErrInvalid) {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k", About: tooMuch}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("SetCompanion(%d runes) = %v, want ErrInvalid", AboutLimit+1, err)
 	}
 }
@@ -750,7 +750,7 @@ func TestOneAccountsCompanionIsNotAnothers(t *testing.T) {
 		t.Fatalf("CreatePrincipal(): %v", err)
 	}
 
-	if err := s.SetCompanion(ctx, mine.ID, openrouter.Settings{APIKey: "mine", About: "I sleep late"}); err != nil {
+	if err := s.SetCompanion(ctx, mine.ID, gateway.Settings{APIKey: "mine", About: "I sleep late"}); err != nil {
 		t.Fatalf("SetCompanion(): %v", err)
 	}
 
@@ -1300,14 +1300,14 @@ func TestAnUnchosenModelFollowsTheInstanceDefault(t *testing.T) {
 	p := testPrincipal(t, s)
 	ctx := context.Background()
 
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k"}); err != nil {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"}); err != nil {
 		t.Fatalf("SetCompanion(): %v", err)
 	}
-	if got, _ := s.Companion(ctx, p.ID); got.ModelOrDefault() != openrouter.DefaultModel {
+	if got, _ := s.Companion(ctx, p.ID); got.ModelOrDefault() != gateway.DefaultModel {
 		t.Errorf("ModelOrDefault() = %q, want the compiled-in one", got.ModelOrDefault())
 	}
 
-	if err := s.SetDefaultModel(ctx, "anthropic/claude-sonnet-5"); err != nil {
+	if err := s.SetDefaultModel(ctx, gateway.OpenRouter, "anthropic/claude-sonnet-5"); err != nil {
 		t.Fatalf("SetDefaultModel(): %v", err)
 	}
 	got, err := s.Companion(ctx, p.ID)
@@ -1322,7 +1322,7 @@ func TestAnUnchosenModelFollowsTheInstanceDefault(t *testing.T) {
 	}
 
 	// A model somebody typed outranks it, which is what makes this a default and not a policy.
-	if err := s.SetCompanion(ctx, p.ID, openrouter.Settings{APIKey: "k", Model: "openai/gpt-5"}); err != nil {
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k", Model: "openai/gpt-5"}); err != nil {
 		t.Fatalf("SetCompanion(chosen): %v", err)
 	}
 	if got, _ := s.Companion(ctx, p.ID); got.ModelOrDefault() != "openai/gpt-5" {
@@ -1330,10 +1330,64 @@ func TestAnUnchosenModelFollowsTheInstanceDefault(t *testing.T) {
 	}
 
 	// Cleared, rather than deleted, and the compiled-in one comes back.
-	if err := s.SetDefaultModel(ctx, ""); err != nil {
+	if err := s.SetDefaultModel(ctx, gateway.OpenRouter, ""); err != nil {
 		t.Fatalf("SetDefaultModel(empty): %v", err)
 	}
-	if m, _ := s.DefaultModel(ctx); m != "" {
+	if m, _ := s.DefaultModel(ctx, gateway.OpenRouter); m != "" {
 		t.Errorf("DefaultModel() = %q, want it cleared", m)
+	}
+}
+
+// A key works with one service and not the other, so the choice is the account's and it travels
+// with the key. A default belongs to a service too: an OpenRouter slug means nothing to the
+// Hugging Face router.
+func TestAProviderIsTheAccountsAndItsDefaultIsPerService(t *testing.T) {
+	s := testStore(t)
+	p := testPrincipal(t, s)
+	ctx := context.Background()
+
+	// A row written before there were two is OpenRouter, which is what it was.
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"}); err != nil {
+		t.Fatalf("SetCompanion(): %v", err)
+	}
+	if got, _ := s.Companion(ctx, p.ID); got.Provider != gateway.OpenRouter {
+		t.Errorf("Provider = %q, want it to fall to the default", got.Provider)
+	}
+
+	if err := s.SetDefaultModel(ctx, gateway.OpenRouter, "openai/gpt-5"); err != nil {
+		t.Fatalf("SetDefaultModel(openrouter): %v", err)
+	}
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{
+		Provider: gateway.HuggingFace, APIKey: "hf",
+	}); err != nil {
+		t.Fatalf("SetCompanion(huggingface): %v", err)
+	}
+
+	got, err := s.Companion(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Companion(): %v", err)
+	}
+	if got.Provider != gateway.HuggingFace {
+		t.Errorf("Provider = %q, want the one that was chosen", got.Provider)
+	}
+	// The other service's default must not reach this account.
+	if got.ModelOrDefault() != gateway.HuggingFaceModel {
+		t.Errorf("ModelOrDefault() = %q, want %q", got.ModelOrDefault(), gateway.HuggingFaceModel)
+	}
+
+	if err := s.SetDefaultModel(ctx, gateway.HuggingFace, "meta-llama/Llama-4-Instruct"); err != nil {
+		t.Fatalf("SetDefaultModel(huggingface): %v", err)
+	}
+	if got, _ := s.Companion(ctx, p.ID); got.ModelOrDefault() != "meta-llama/Llama-4-Instruct" {
+		t.Errorf("ModelOrDefault() = %q, want this service's own", got.ModelOrDefault())
+	}
+	if m, _ := s.DefaultModel(ctx, gateway.OpenRouter); m != "openai/gpt-5" {
+		t.Errorf("the other service's default = %q, want it untouched", m)
+	}
+
+	if err := s.SetCompanion(ctx, p.ID, gateway.Settings{
+		Provider: "anthropic", APIKey: "k",
+	}); err == nil {
+		t.Error("SetCompanion() = nil, want a service nobody can ask refused")
 	}
 }

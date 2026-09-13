@@ -152,7 +152,7 @@ go looking for. Add a new one.
   who will read it, not `not found: no reminder r_1`.
 - `context.Context` first parameter on anything that can block.
 - Injectable clocks: `store.SetClock` takes a `func() time.Time` so tests drive expiry
-  without sleeping. `webpush.Sender.SetClient` and `openrouter.SetEndpoint` are the same idea
+  without sleeping. `webpush.Sender.SetClient` and `gateway.SetEndpoint` are the same idea
   for the network — the latter returns the function that puts the old value back, so a test
   restores it with `defer` rather than remembering to.
 - A function that returns "this succeeded, and also something happened" returns a bool, not

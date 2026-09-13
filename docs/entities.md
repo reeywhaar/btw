@@ -191,13 +191,17 @@ key can put text on that lock screen. A test asserts it never appears in a respo
 ### `companion`
 
 ```
-principal_id, api_key, model, about, updated_at
+principal_id, provider, api_key, model, about, updated_at
 ```
 
 The model an account has given a key for, and what it is told about them. One row per
 principal and **not a singleton like `smtp`** — the key spends its owner's credit and `about`
 describes one person's life, neither of which is the instance's to hold. `ON DELETE CASCADE`,
 so forgetting an account forgets its key with it.
+
+`provider` is which service the key is for — `openrouter` or `huggingface`. The account's rather
+than the instance's, because a key works with one of them and not the other, and the key is
+theirs. A row written before there were two reads as `openrouter`, which is what it was.
 
 `api_key` is stored as written, for the reason `smtp.password` is: there is no vault here, and
 a reversible scramble would only make it look protected. It is never sent back out — the API
@@ -219,13 +223,14 @@ so the column cannot be used as storage.
 ### `companion_default`
 
 ```
-singleton, model, updated_at
+provider, model, updated_at
 ```
 
-The model an account with no choice of its own follows. A singleton, and an administrator's —
-this one *is* the instance's, unlike the key above it.
+The model an account with no choice of its own follows. An administrator's — this one *is* the
+instance's, unlike the key above it. One row per service, because a slug belongs to one:
+`minimax/minimax-m3:free` means nothing to the Hugging Face router.
 
-It exists because OpenRouter retires slugs. A compile-time constant cannot survive that: every
+It exists because routers retire slugs. A compile-time constant cannot survive that: every
 account that never chose would break at the same moment, with no way back but a redeploy. Empty
 means the constant, which is also what an instance that has never touched it gets.
 

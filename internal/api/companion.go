@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"btw/internal/advise"
-	"btw/internal/openrouter"
+	"btw/internal/gateway"
 	"btw/internal/store"
 )
 
@@ -34,16 +34,38 @@ func (s *Server) adviceStale(r *http.Request, principalID string) {
 // A stored key is never sent back, for the reason docs/mail.md gives about the relay's
 // password: it would be readable by anything that can read a response for no gain, since the
 // form does not need it to save a change. `key_set` is what the interface actually needs.
-func companionJSON(set openrouter.Settings) map[string]any {
+func (s *Server) companionJSON(r *http.Request, set gateway.Settings) (map[string]any, error) {
+	// Every service, with the model each falls back to, so the form can repaint the moment
+	// somebody changes the select and without knowing any of it itself.
+	services := make([]map[string]any, 0, len(gateway.Providers()))
+	for _, p := range gateway.Providers() {
+		fallback, err := s.store.DefaultModel(r.Context(), p)
+		if err != nil {
+			return nil, err
+		}
+		if fallback == "" {
+			fallback = p.DefaultModel()
+		}
+		services = append(services, map[string]any{
+			"id":            string(p),
+			"label":         p.Label(),
+			"keys_url":      p.KeysURL(),
+			"key_example":   p.KeyExample(),
+			"default_model": fallback,
+		})
+	}
+
 	return map[string]any{
 		"configured": set.Configured(),
+		"provider":   string(set.Provider.OrDefault()),
+		"providers":  services,
 		"model":      set.Model,
 		"key_set":    set.APIKey != "",
 		"about":      set.About,
 		// The instance's, so the placeholder names the model a blank field would actually ask.
 		"default_model": set.ModelOrDefault(),
 		"about_limit":   store.AboutLimit,
-	}
+	}, nil
 }
 
 func (s *Server) getCompanion(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +76,11 @@ func (s *Server) getCompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body := companionJSON(set)
+	body, err := s.companionJSON(r, set)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	// Only for a configured companion. Reporting on the advice of an account that has no key
 	// would be reporting on a loop that never runs.
 	if set.Configured() {
@@ -127,15 +153,21 @@ func unixOrNil(t time.Time) any {
 func (s *Server) putCompanion(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	var req struct {
-		APIKey string `json:"api_key"`
-		Model  string `json:"model"`
-		About  string `json:"about"`
+		Provider string `json:"provider"`
+		APIKey   string `json:"api_key"`
+		Model    string `json:"model"`
+		About    string `json:"about"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 
-	set := openrouter.Settings{APIKey: req.APIKey, Model: req.Model, About: req.About}
+	set := gateway.Settings{
+		Provider: gateway.Provider(req.Provider),
+		APIKey:   req.APIKey,
+		Model:    req.Model,
+		About:    req.About,
+	}
 	// An empty key keeps the one already stored, which is what lets somebody change the model
 	// or rewrite their description without retyping a credential the form was never given.
 	if set.APIKey == "" {
@@ -153,7 +185,7 @@ func (s *Server) putCompanion(w http.ResponseWriter, r *http.Request) {
 	}
 	// The model and never the key, and no part of about either: what somebody wrote about
 	// their own life is not a thing to leave in a log an operator reads.
-	s.log.Info("companion configured", "model", set.Model, "by", p.Username)
+	s.log.Info("companion configured", "provider", set.Provider.OrDefault(), "model", set.Model, "by", p.Username)
 	// The `about` may have been rewritten, which changes every answer about this person.
 	s.adviceStale(r, p.ID)
 	s.getCompanion(w, r)
@@ -300,8 +332,9 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		APIKey string `json:"api_key"`
-		Model  string `json:"model"`
+		Provider string `json:"provider"`
+		APIKey   string `json:"api_key"`
+		Model    string `json:"model"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -313,9 +346,10 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	set := openrouter.Settings{
-		APIKey: strings.TrimSpace(req.APIKey),
-		Model:  strings.TrimSpace(req.Model),
+	set := gateway.Settings{
+		Provider: gateway.Provider(strings.TrimSpace(req.Provider)).OrDefault(),
+		APIKey:   strings.TrimSpace(req.APIKey),
+		Model:    strings.TrimSpace(req.Model),
 	}
 	if set.APIKey == "" {
 		set.APIKey = stored.APIKey
@@ -327,7 +361,15 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 		set.Model = stored.Model
 	}
 	if set.Model == "" {
-		set.Model = stored.ModelOrDefault()
+		// The administrator's for whichever service is in the form, which is not necessarily
+		// the one the stored row is on.
+		fallback, err := s.store.DefaultModel(r.Context(), set.Provider)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		set.Default = fallback
+		set.Model = set.ModelOrDefault()
 	}
 
 	if !set.Configured() {
@@ -376,16 +418,25 @@ func (s *Server) testCompanion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDefaultModel(w http.ResponseWriter, r *http.Request) {
-	model, err := s.store.DefaultModel(r.Context())
-	if err != nil {
-		s.fail(w, r, err)
-		return
+	// One per service rather than one value, because a slug belongs to a service.
+	out := make([]map[string]any, 0, len(gateway.Providers()))
+	for _, p := range gateway.Providers() {
+		model, err := s.store.DefaultModel(r.Context(), p)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		out = append(out, map[string]any{
+			"provider": string(p),
+			"label":    p.Label(),
+			"model":    model,
+			// What a blank falls through to, so the form can offer it as a placeholder.
+			"fallback_model": p.DefaultModel(),
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"model": model,
-		// What a blank field falls through to, so the form can offer it as a placeholder.
-		"fallback_model": openrouter.DefaultModel,
-		"model_limit":    store.ModelLimit,
+		"providers":   out,
+		"model_limit": store.ModelLimit,
 	})
 }
 
@@ -396,15 +447,17 @@ func (s *Server) getDefaultModel(w http.ResponseWriter, r *http.Request) {
 // reported by the first companion that tries it.
 func (s *Server) putDefaultModel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Model string `json:"model"`
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := s.store.SetDefaultModel(r.Context(), req.Model); err != nil {
+	provider := gateway.Provider(req.Provider).OrDefault()
+	if err := s.store.SetDefaultModel(r.Context(), provider, req.Model); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("default model set", "model", req.Model, "by", principal(r).Username)
+	s.log.Info("default model set", "provider", provider, "model", req.Model, "by", principal(r).Username)
 	s.getDefaultModel(w, r)
 }

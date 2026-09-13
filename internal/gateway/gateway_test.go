@@ -1,6 +1,7 @@
-package openrouter
+package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,12 +26,19 @@ func serve(t *testing.T, h http.HandlerFunc) {
 	t.Cleanup(SetEndpoint(srv.URL))
 }
 
+// check drives one exchange. Check is gone — a one-word probe proved a key and a slug and
+// nothing about the thing the loop does — so these go through Ask, which is what runs.
+func check(ctx context.Context, set Settings, via proxy.Settings) (Result, error) {
+	_, res, err := Ask(ctx, set, via, "a system prompt", "a question", 200)
+	return res, err
+}
+
 func ok(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	io.WriteString(w, body)
 }
 
-func TestACheckCarriesTheKeyAndTheModel(t *testing.T) {
+func TestAnExchangeCarriesTheKeyAndTheModel(t *testing.T) {
 	var gotAuth, gotModel string
 	serve(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -42,9 +50,9 @@ func TestACheckCarriesTheKeyAndTheModel(t *testing.T) {
 		ok(w, `{"model":"minimax/minimax-m3:free","choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":12}}`)
 	})
 
-	res, err := Check(t.Context(), Settings{APIKey: "sk-or-v1-abc", Model: "minimax/minimax-m3:free"}, direct)
+	res, err := check(t.Context(), Settings{APIKey: "sk-or-v1-abc", Model: "minimax/minimax-m3:free"}, direct)
 	if err != nil {
-		t.Fatalf("Check(): %v", err)
+		t.Fatalf("Ask(): %v", err)
 	}
 	if gotAuth != "Bearer sk-or-v1-abc" {
 		t.Errorf("Authorization = %q, want a bearer token", gotAuth)
@@ -64,9 +72,9 @@ func TestTheModelThatAnsweredIsReportedAndNotTheOneAskedFor(t *testing.T) {
 		ok(w, `{"model":"minimax/minimax-m2.7:free","choices":[{"message":{"content":"ok"}}]}`)
 	})
 
-	res, err := Check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3:free"}, direct)
+	res, err := check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3:free"}, direct)
 	if err != nil {
-		t.Fatalf("Check(): %v", err)
+		t.Fatalf("Ask(): %v", err)
 	}
 	if res.Model != "minimax/minimax-m2.7:free" {
 		t.Errorf("Model = %q, want what actually served it", res.Model)
@@ -86,9 +94,9 @@ func TestAFaultInsideATwoHundredIsStillAFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			serve(t, func(w http.ResponseWriter, _ *http.Request) { ok(w, tc.body) })
 
-			_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
+			_, err := check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 			if err == nil {
-				t.Fatal("Check() = nil, want the fault reported")
+				t.Fatal("Ask() = nil, want the fault reported")
 			}
 			if !strings.Contains(err.Error(), "the provider went away") {
 				t.Errorf("error = %q, want the gateway's own words", err)
@@ -117,9 +125,9 @@ func TestEachRefusalSaysWhichKindItWas(t *testing.T) {
 				io.WriteString(w, tc.body)
 			})
 
-			_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
+			_, err := check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 			if err == nil {
-				t.Fatalf("Check() = nil, want a refusal")
+				t.Fatalf("Ask() = nil, want a refusal")
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error = %q, want it to say %q", err, tc.want)
@@ -136,9 +144,9 @@ func TestABodyThatIsNotJSONIsQuotedRatherThanSummarised(t *testing.T) {
 		io.WriteString(w, "<html><body>upstream connect error</body></html>")
 	})
 
-	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
+	_, err := check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 	if err == nil {
-		t.Fatal("Check() = nil, want the page reported")
+		t.Fatal("Ask() = nil, want the page reported")
 	}
 	if !strings.Contains(err.Error(), "upstream connect error") {
 		t.Errorf("error = %q, want the page's own words", err)
@@ -150,15 +158,15 @@ func TestAGatewayThatAnsweredNothingIsAFailure(t *testing.T) {
 		ok(w, `{"model":"m","choices":[]}`)
 	})
 
-	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct); err == nil {
-		t.Error("Check() = nil, want an empty reply refused")
+	if _, err := check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct); err == nil {
+		t.Error("Ask() = nil, want an empty reply refused")
 	}
 }
 
 func TestThereIsNothingToCheckWithoutAKey(t *testing.T) {
 	// No server: reaching one at all would be the bug.
-	if _, err := Check(t.Context(), Settings{Model: "m"}, direct); err == nil {
-		t.Error("Check() = nil, want a refusal before any request")
+	if _, err := check(t.Context(), Settings{Model: "m"}, direct); err == nil {
+		t.Error("Ask() = nil, want a refusal before any request")
 	}
 }
 
@@ -171,9 +179,9 @@ func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 		io.WriteString(w, `{"error":{"code":429,"message":"Rate limit exceeded, free-models-per-day"}}`)
 	})
 
-	_, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
+	_, err := check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct)
 	if !errors.Is(err, ErrRateLimited) {
-		t.Errorf("Check() = %v, want it to satisfy errors.Is(ErrRateLimited)", err)
+		t.Errorf("Ask() = %v, want it to satisfy errors.Is(ErrRateLimited)", err)
 	}
 	// And the gateway's own words survive alongside the kind, since "per day" and "per minute"
 	// are hours apart.
@@ -186,7 +194,7 @@ func TestARateLimitIsTellableApartFromEveryOtherRefusal(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 		io.WriteString(w, `{"error":{"code":401,"message":"No auth credentials found"}}`)
 	})
-	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct); errors.Is(err, ErrRateLimited) {
+	if _, err := check(t.Context(), Settings{APIKey: "k", Model: "m"}, direct); errors.Is(err, ErrRateLimited) {
 		t.Error("a rejected key was reported as a rate limit")
 	}
 }
@@ -204,18 +212,72 @@ func TestAnUnchosenModelIsResolvedWhenItIsAsked(t *testing.T) {
 		ok(w, `{"model":"m","choices":[{"message":{"content":"ok"}}]}`)
 	})
 
-	if _, err := Check(t.Context(), Settings{APIKey: "k"}, direct); err != nil {
-		t.Fatalf("Check(): %v", err)
+	if _, err := check(t.Context(), Settings{APIKey: "k"}, direct); err != nil {
+		t.Fatalf("Ask(): %v", err)
 	}
 	if asked != DefaultModel {
 		t.Errorf("asked %q, want %q — an empty model must not reach the gateway", asked, DefaultModel)
 	}
 
 	// And one that was chosen is the one asked for.
-	if _, err := Check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3"}, direct); err != nil {
-		t.Fatalf("Check(): %v", err)
+	if _, err := check(t.Context(), Settings{APIKey: "k", Model: "minimax/minimax-m3"}, direct); err != nil {
+		t.Fatalf("Ask(): %v", err)
 	}
 	if asked != "minimax/minimax-m3" {
 		t.Errorf("asked %q, want the chosen one", asked)
+	}
+}
+
+// reasoning is OpenRouter's own field. The Hugging Face router hands the body to whichever
+// provider serves the model, and one that rejects an unknown field is a 400 nobody can explain
+// from the message.
+func TestOnlyOpenRouterIsSentItsOwnFields(t *testing.T) {
+	var body map[string]any
+	serve(t, func(w http.ResponseWriter, r *http.Request) {
+		// A fresh map each time: decoding into one already holding keys merges rather than
+		// replaces, and the second request would inherit the first's fields.
+		body = map[string]any{}
+		json.NewDecoder(r.Body).Decode(&body)
+		ok(w, `{"model":"m","choices":[{"message":{"content":"{}"}}]}`)
+	})
+
+	for _, tc := range []struct {
+		provider Provider
+		want     bool
+	}{
+		{OpenRouter, true},
+		{HuggingFace, false},
+	} {
+		t.Run(string(tc.provider), func(t *testing.T) {
+			if _, _, err := Ask(t.Context(), Settings{Provider: tc.provider, APIKey: "k"},
+				direct, "s", "u", 200); err != nil {
+				t.Fatalf("Ask(): %v", err)
+			}
+			if _, sent := body["reasoning"]; sent != tc.want {
+				t.Errorf("reasoning sent = %v, want %v", sent, tc.want)
+			}
+			// What both accept, and what the answer being readable depends on.
+			if body["response_format"] == nil {
+				t.Error("response_format was not sent")
+			}
+			if body["model"] != tc.provider.DefaultModel() {
+				t.Errorf("model = %v, want this service's own default", body["model"])
+			}
+		})
+	}
+}
+
+// Two addresses, and a key for one is not a key for the other — so the provider has to reach
+// the request rather than being decoration on a form.
+func TestEachServiceHasItsOwnAddressAndDefault(t *testing.T) {
+	if OpenRouter.Endpoint() == HuggingFace.Endpoint() {
+		t.Error("both services share an address")
+	}
+	if OpenRouter.DefaultModel() == HuggingFace.DefaultModel() {
+		t.Error("both services share a default model")
+	}
+	// A row written before there were two still asks somewhere.
+	if (Provider("")).OrDefault() != OpenRouter || Provider("anthropic").OrDefault() != OpenRouter {
+		t.Error("an unset or unknown service does not fall back to the default")
 	}
 }

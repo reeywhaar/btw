@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"btw/internal/openrouter"
+	"btw/internal/gateway"
 	"btw/internal/proxy"
 	"btw/internal/store"
 )
@@ -63,7 +63,7 @@ type Trial struct {
 //
 // Nothing is stored. The press reconciles unsaved form values, so an answer earned under
 // settings nobody has saved has no row it belongs to.
-func Try(ctx context.Context, set openrouter.Settings, via proxy.Settings) (Trial, error) {
+func Try(ctx context.Context, set gateway.Settings, via proxy.Settings) (Trial, error) {
 	if !set.Configured() {
 		return Trial{}, errors.New("there is no companion to ask")
 	}
@@ -76,7 +76,7 @@ func Try(ctx context.Context, set openrouter.Settings, via proxy.Settings) (Tria
 	ctx, cancel := context.WithTimeout(ctx, askTimeout)
 	defer cancel()
 
-	reply, res, err := openrouter.Ask(ctx, set, via, System(), question, budget(len(tryReminders)))
+	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(len(tryReminders)))
 	if err != nil {
 		return Trial{}, err
 	}

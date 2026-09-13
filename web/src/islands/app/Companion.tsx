@@ -20,6 +20,7 @@ import { Field } from "@app/components/Field";
 import { Note } from "@app/components/Note";
 import { Row } from "@app/components/Row";
 import { Section } from "@app/components/Section";
+import { Select } from "@app/components/Select";
 import { CheckIcon } from "@app/components/icons/CheckIcon";
 import { CrossCircleIcon } from "@app/components/icons/CrossCircleIcon";
 import { WarningIcon } from "@app/components/icons/WarningIcon";
@@ -54,6 +55,15 @@ export function Companion() {
       >
         {c.configured && (
           <>
+            <Field
+              label="Service"
+              control={
+                <span className="text-sm text-muted">
+                  {c.providers.find((s) => s.id === c.provider)?.label ??
+                    c.provider}
+                </span>
+              }
+            />
             <Field
               label="Model"
               control={
@@ -224,6 +234,7 @@ function CompanionDialog({
   onSaved: () => void;
 }) {
   const [form, setForm] = useState<CompanionEdit>({
+    provider: "",
     api_key: "",
     model: "",
     about: "",
@@ -238,6 +249,7 @@ function CompanionDialog({
   useEffect(() => {
     if (!open) return;
     setForm({
+      provider: current.provider,
       api_key: "",
       // The stored value, blank included, since blank is what "follow the default" looks like.
       // Seeding it with the default's name instead would hand back a model nobody typed, and
@@ -258,6 +270,7 @@ function CompanionDialog({
   };
 
   const over = form.about.length - current.about_limit;
+  const service = current.providers.find((s) => s.id === form.provider);
 
   return (
     <Dialog
@@ -273,7 +286,11 @@ function CompanionDialog({
               variant="quiet"
               disabled={test.isPending || (!form.api_key && !current.key_set)}
               onClick={() =>
-                test.mutate({ api_key: form.api_key, model: form.model })
+                test.mutate({
+                  provider: form.provider,
+                  api_key: form.api_key,
+                  model: form.model,
+                })
               }
             >
               {test.isPending ? "trying…" : "Try it"}
@@ -291,26 +308,44 @@ function CompanionDialog({
         </>
       }
     >
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium text-fg">Service</span>
+        {/* A key works with one of them and not the other, so this decides what the two
+            fields under it mean. */}
+        <Select
+          value={form.provider}
+          onChange={(e) => set("provider", e.target.value)}
+        >
+          {current.providers.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </Select>
+      </div>
       <TextField
-        label="OpenRouter key"
+        label="Key"
         type="password"
-        placeholder="sk-or-v1-…"
+        placeholder={service?.key_example}
         autoCapitalize="none"
         autoComplete="off"
         hint={
-          current.key_set
+          // Only while it is still the service the stored key belongs to: a key for one of
+          // them is not a key for the other, so keeping it across a change would keep the
+          // wrong one.
+          current.key_set && form.provider === current.provider
             ? "A key is stored. Leave this empty to keep it."
-            : "From openrouter.ai/keys. It is stored as written and never sent back out."
+            : `From ${service?.keys_url}. It is stored as written and never sent back out.`
         }
         value={form.api_key}
         onChange={(e) => set("api_key", e.target.value)}
       />
       <TextField
         label="Model"
-        placeholder={current.default_model}
+        placeholder={service?.default_model}
         autoCapitalize="none"
         autoComplete="off"
-        hint="Leave it empty to follow the default, which is free and may change."
+        hint="Leave it empty to follow the default, which may change."
         value={form.model}
         onChange={(e) => set("model", e.target.value)}
       />

@@ -293,12 +293,14 @@ function TestDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
       }
     >
       <Note>
-        Fetches openrouter.ai through the proxy — the one host a companion talks
-        to. It works whether or not the proxy is switched on.
+        Fetches each service a companion can talk to, through the proxy. They
+        are separate hosts and are blocked separately. It works whether or not
+        the proxy is switched on.
       </Note>
       {test.isSuccess && (
         <p className="text-sm text-muted">
-          It got through in {test.data.took_ms} ms.
+          Reached {test.data.reached.map((r) => r.label).join(" and ")} in{" "}
+          {test.data.took_ms} ms.
         </p>
       )}
       {/* Whatever failed, in its own words — with any address scrubbed out of it server-side,
