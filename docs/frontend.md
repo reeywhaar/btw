@@ -209,6 +209,20 @@ Against **icon** buttons there is no text to align to, and baseline drifted. So 
 tops and the sentence carries a little padding of its own, which puts its first line level with
 the marks and still lets it wrap downward.
 
+## A link inside something pressable
+
+A reminder's description may hold a URL, and the row is pressable to edit it. The two cannot
+nest: an anchor inside a button is invalid, and `role="button"` on a wrapper only moves the
+problem while handing back the keyboard behaviour a real button already has.
+
+So the button holds the sentence alone and stretches over the row with `before:absolute
+before:inset-0`, and the anchor is lifted back above it with `relative`. Anything else on the
+row meant to be pressed — the bin, undo — is lifted the same way, or the stretched target
+covers it.
+
+Text is never set as HTML. `Linkified` splits on a URL pattern and builds nodes, and matches
+only `http` and `https` — which is what keeps `javascript:` from ever becoming an anchor.
+
 ## A section with nothing to do in it is not shown
 
 Recovery disappears when the instance has no relay **and** the account has no address. Both

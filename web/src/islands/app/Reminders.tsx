@@ -14,6 +14,7 @@ import {
 } from "@app/api/actions/reminders";
 import { Button } from "@app/components/Button";
 import { Dialog } from "@app/components/Dialog";
+import { Linkified } from "@app/components/Linkified";
 import { Note } from "@app/components/Note";
 import { TextArea } from "@app/components/TextArea";
 import { TextField } from "@app/components/TextField";
@@ -145,55 +146,65 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
           marks drifted. Aligning the tops and giving the sentence a hair of padding puts its
           first line level with the marks and lets it wrap downward. */}
       <li
-        className={`flex items-start gap-1 py-2 ${isBinned ? "text-faint" : ""}`}
+        className={`relative flex items-start gap-1 py-2 ${isBinned ? "text-faint" : ""}`}
       >
-        {/* The sentence is the way in, because it is the thing somebody is looking at. Its
-            own button rather than a click on the row, so it does not swallow the bin
-            or nest one control inside another. */}
-        <button
-          onClick={() => setEditing(true)}
-          disabled={isBinned}
-          className="min-w-0 flex-1 py-1.5 text-left"
-          aria-label={`Edit ${reminder.text}`}
-        >
-          <span className="block break-words">{reminder.text}</span>
+        {/* The description sits beside the sentence rather than inside it, because a link
+            cannot live in a button. Nesting one is invalid, a screen reader has to announce
+            the pair as something, and role="button" on a wrapper only moves the problem while
+            handing back the keyboard behaviour a real button already has.
+            Instead the button covers the row with a stretched ::before, and the one thing that
+            is not it — the link — is lifted back above by position. Whole row to edit, a real
+            anchor to follow. */}
+        <div className="min-w-0 flex-1 py-1.5">
+          {/* The sentence is the way in, because it is the thing somebody is looking at. */}
+          <button
+            onClick={() => setEditing(true)}
+            disabled={isBinned}
+            className="block w-full text-left before:absolute before:inset-0 before:content-['']"
+            aria-label={`Edit ${reminder.text}`}
+          >
+            <span className="block break-words">{reminder.text}</span>
+          </button>
           {reminder.note && (
             // One line of it, so a description is worth adding without turning the list
             // into the thing this product is trying not to be.
-            <span className="mt-0.5 block truncate text-sm text-faint">
-              {reminder.note}
-            </span>
+            <p className="mt-0.5 truncate text-sm text-faint">
+              <Linkified text={reminder.note} />
+            </p>
           )}
           {/* Smaller than the note, which is itself smaller than the sentence. The note is
               something a person wrote and the categories are something a model guessed, so
               they sit a step further down. Not a row of pills either — labels at the size of
               the reminder would make the list look like a system for filing things. */}
           {reminder.categories && reminder.categories.length > 0 && (
-            <span className="mt-0.5 block truncate text-xs text-faint">
+            <p className="mt-0.5 truncate text-xs text-faint">
               {reminder.categories.join(", ")}
-            </span>
+            </p>
           )}
-        </button>
-        {isBinned ? (
-          // A word rather than a mark. Undo is the opposite of the thing just pressed, and an
-          // arrow beside a bin would be one icon asking to be told apart from another.
-          <button
-            onClick={() => undo.mutate(reminder.id)}
-            className="shrink-0 py-1.5 text-sm underline-offset-4 hover:text-fg hover:underline"
-          >
-            undo
-          </button>
-        ) : (
-          /* One mark. It was a tick and a cross, which ended a reminder identically and
-             differed only in the word beside them — a to-do list's *done* and *drop*, where
-             the second existed so that finishing something never started did not mean
-             claiming otherwise. A bin claims neither, and says where the thing goes. */
-          <IconButton label="Bin" onClick={() => bin.mutate(reminder.id)}>
-            {/* Fainter than the sentence beside it. It is on every reminder and wanted on
-                almost none of them, so it should be findable rather than present. */}
-            <BinIcon className="opacity-40" />
-          </IconButton>
-        )}
+        </div>
+        {/* Positioned, so the sentence's stretched press-target does not cover the one
+            control on the row that is not it. */}
+        <span className="relative flex shrink-0">
+          {isBinned ? (
+            // A word rather than a mark. Undo is the opposite of the thing just pressed, and
+            // an arrow beside a bin would be one icon asking to be told apart from another.
+            <button
+              onClick={() => undo.mutate(reminder.id)}
+              className="py-1.5 text-sm underline-offset-4 hover:text-fg hover:underline"
+            >
+              undo
+            </button>
+          ) : (
+            /* One mark rather than a tick beside a cross: the pair ended a reminder
+               identically and differed only in the word. A bin claims neither, and says
+               where the thing goes. */
+            <IconButton label="Bin" onClick={() => bin.mutate(reminder.id)}>
+              {/* Fainter than the sentence beside it. It is on every reminder and wanted on
+                  almost none of them, so it should be findable rather than present. */}
+              <BinIcon className="opacity-40" />
+            </IconButton>
+          )}
+        </span>
       </li>
 
       <EditDialog
