@@ -265,6 +265,13 @@ They check two different things, in two steps, so a failure names which:
 *skips* `publish` rather than failing it, and a step in a job that never starts cannot report
 that it never started. It reads both results off `needs` and says which half broke.
 
+It sends through **notifio**, via `reeywhaar/notifio/ghactions/notify@main` — a composite
+action, so nothing is checked out and it finds its own script through `github.action_path`.
+The two secrets are `NOTIFIO_HOST` and `NOTIFIO_TOKEN`, and a repository with neither set
+skips both steps rather than failing: a notifier nobody has configured should not look like a
+broken build.
+
+
 `concurrency` with `cancel-in-progress` means a newer commit on main wins the race for
 `latest` rather than queueing behind an older one that would overwrite it.
 

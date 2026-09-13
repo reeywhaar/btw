@@ -246,41 +246,46 @@ jobs:
     # told that a commit you just superseded was cancelled is noise.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    # Nothing is checked out: a composite action referenced across repositories is fetched by
+    # the runner and finds its own script through github.action_path.
     permissions: {}
 
     # The secrets context is not available to `if`, so the presence check goes through env.
     # Without this, a repo that has not set the secrets yet gets a red run on every push —
     # a broken notifier should not look like a broken build.
     env:
-      TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
-      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      NOTIFIO_HOST: ${{ secrets.NOTIFIO_HOST }}
+      NOTIFIO_TOKEN: ${{ secrets.NOTIFIO_TOKEN }}
+      CONFIGURED: ${{ secrets.NOTIFIO_HOST != '' && secrets.NOTIFIO_TOKEN != '' }}
 
     steps:
-      - name: Notify Telegram on success
-        if: ${{ env.TELEGRAM_TOKEN != '' && env.TELEGRAM_TO != '' && needs.publish.result == 'success' }}
-        uses: appleboy/telegram-action@v1.0.1
+      # A token is issued for one channel, and the channel decides where the message lands.
+      - name: Notify on success
+        if: ${{ env.CONFIGURED == 'true' && needs.publish.result == 'success' }}
+        uses: reeywhaar/notifio/ghactions/notify@main
         with:
-          to: ${{ env.TELEGRAM_TO }}
-          token: ${{ env.TELEGRAM_TOKEN }}
-          format: markdown
-          disable_web_page_preview: true
-          message: |
-            🔔 *${{ github.repository }}* published `ghcr.io/${{ github.repository }}:latest`
+          host: ${{ env.NOTIFIO_HOST }}
+          token: ${{ env.NOTIFIO_TOKEN }}
+          subject: "${{ github.repository }} published"
+          body-type: md
+          body: |
+            🔔 Published `ghcr.io/${{ github.repository }}:latest`
 
-            version `${{ needs.publish.outputs.version }}` — [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) by ${{ github.actor }}
+            - version `${{ needs.publish.outputs.version }}` by ${{ github.actor }}
+            - [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
-      - name: Notify Telegram on failure
-        if: ${{ env.TELEGRAM_TOKEN != '' && env.TELEGRAM_TO != '' && needs.publish.result != 'success' }}
-        uses: appleboy/telegram-action@v1.0.1
+      - name: Notify on failure
+        if: ${{ env.CONFIGURED == 'true' && needs.publish.result != 'success' }}
+        uses: reeywhaar/notifio/ghactions/notify@main
         with:
-          to: ${{ env.TELEGRAM_TO }}
-          token: ${{ env.TELEGRAM_TOKEN }}
-          format: markdown
-          disable_web_page_preview: true
+          host: ${{ env.NOTIFIO_HOST }}
+          token: ${{ env.NOTIFIO_TOKEN }}
           # Which half broke is the first thing worth knowing: a failing test means the
           # commit is bad, a failing publish means the commit is fine and the build is not.
-          message: |
-            ❌ *${{ github.repository }}* ${{ needs.test.result != 'success' && 'tests failed' || 'publish failed' }}
+          subject: "${{ github.repository }} ${{ needs.test.result != 'success' && 'tests failed' || 'publish failed' }}"
+          body-type: md
+          body: |
+            ❌ ${{ needs.test.result != 'success' && 'Tests failed' || 'Publish failed' }}, by ${{ github.actor }}
 
-            [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) by ${{ github.actor }}
-            [View run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            - [view the run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
