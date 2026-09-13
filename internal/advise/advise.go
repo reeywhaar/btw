@@ -209,14 +209,21 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	}
 	carried := 0
 	for id, old := range previous {
-		if !old.Curve.Valid() {
-			continue
-		}
 		fresh, answered := advice[id]
-		if answered && fresh.Curve.Valid() {
+		if !answered {
+			// Nothing was said about it at all — a batch that failed, or an entry the model
+			// left out. **All of it stands**, not only the curve: [store.SetAdvice] replaces
+			// the whole set it is given, so an entry rebuilt from a zero value is an entry
+			// whose categories have been deleted.
+			advice[id] = old
+			carried++
 			continue
 		}
-		// Categories can be readable when the curve is not, so only the curve comes from before.
+		if fresh.Curve.Valid() || !old.Curve.Valid() {
+			continue
+		}
+		// Answered, but not in a shape the weighting reads. The categories can be readable when
+		// the curve is not, so those are this round's and only the curve comes from before.
 		fresh.Curve = old.Curve
 		advice[id] = fresh
 		carried++

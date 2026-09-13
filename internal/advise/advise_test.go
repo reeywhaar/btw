@@ -826,3 +826,59 @@ func TestNoBatchEverExceedsWhatAModelWillAnswer(t *testing.T) {
 		}
 	}
 }
+
+// A round that says nothing about a reminder must not cost it what it already had.
+//
+// SetAdvice replaces the whole set it is given, so anything left out of the map is deleted —
+// and a batch that fails leaves every reminder after it out of the map.
+func TestAReminderKeepsItsCategoriesWhenARoundSaysNothingAboutIt(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
+
+	var ids []string
+	for i := range 25 {
+		r, _ := st.CreateReminder(ctx, p.ID, fmt.Sprintf("reminder %d", i))
+		ids = append(ids, r.ID)
+	}
+
+	// A first round that answers about all of them, with categories.
+	full := &upstream{answer: func(question string, _ int) (string, int) {
+		var entries []string
+		for _, id := range ids {
+			if strings.Contains(question, id) {
+				entries = append(entries, `{"id":"`+id+`","category":["chores"],"curve":`+curve(0.8)+`}`)
+			}
+		}
+		return `{"results":[` + strings.Join(entries, ",") + `]}`, 0
+	}}
+	full.start(t)
+	adviser(st).Once(ctx)
+
+	before, _ := st.AdviceFor(ctx, ids)
+	for _, id := range ids {
+		if len(before[id].Categories) == 0 {
+			t.Fatalf("%s has no categories before the failing round", id)
+		}
+	}
+
+	// Then a round where the very first batch is refused, so nothing is answered at all.
+	st.MarkAdviceStale(ctx, p.ID)
+	refused := &upstream{status: http.StatusUnauthorized}
+	refused.start(t)
+	adviser(st).Once(ctx)
+
+	after, err := st.AdviceFor(ctx, ids)
+	if err != nil {
+		t.Fatalf("AdviceFor(): %v", err)
+	}
+	for _, id := range ids {
+		if len(after[id].Categories) == 0 {
+			t.Errorf("%s lost its categories to a round that said nothing", id)
+		}
+		if !after[id].Curve.Valid() {
+			t.Errorf("%s lost its curve to a round that said nothing", id)
+		}
+	}
+}
