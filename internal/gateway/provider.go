@@ -94,6 +94,17 @@ func (p Provider) tune(body map[string]any) {
 	}
 }
 
+// MaxOutputTokens is the most any one answer may be given room for.
+//
+// Models cap what they will be asked for, and the cap is theirs rather than the router's:
+// exceeding it is a 400 that names the model and refuses the request outright, not a shorter
+// answer. 32,768 is the common one, and this sits under it.
+//
+// Nothing published says what a given model's cap is — the Hugging Face router's /v1/models
+// carries context_length, which is the window and not this — so it is a constant low enough to
+// be safe rather than a number read per model.
+const MaxOutputTokens = 32000
+
 // ThinkingBudget is the ceiling to allow for thinking that cannot be switched off.
 //
 // Thinking counts against max_tokens, so a model that must think and is given room only for an

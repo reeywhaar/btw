@@ -23,7 +23,16 @@ the whole ceiling on it and is cut off before writing any JSON, which arrives as
 cut off before it finished* and reads like a budget that wants raising.
 
 On OpenRouter it is switched off. On the Hugging Face router it cannot be, and the room is
-bought instead — `ThinkingBudget`, sixteen thousand tokens on top of the question's own.
+bought instead — `ThinkingBudget`, sixteen thousand tokens, taken **out of** the ceiling rather
+than added on top of it. A model refuses a request for more than it will produce with a `400`
+naming itself, so the cap has to be the last thing applied:
+
+```
+max_tokens = min(2000 + 1800 × reminders + thinking, 32000)
+```
+
+Nothing published says what a given model's cap is — the router's `context_length` is the window
+and not this — so 32,000 is a constant chosen to sit under the common 32,768.
 
 The field that would switch it off there, `chat_template_kwargs: {thinking: false}`, is refused
 outright by a model whose thinking mode is `required`:

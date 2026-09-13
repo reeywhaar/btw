@@ -642,4 +642,15 @@ func TestAServiceThatCannotStopThinkingIsGivenRoomToThink(t *testing.T) {
 	if huggingface-openrouter < 8000 {
 		t.Errorf("room for thinking = %d, want enough to be worth having", huggingface-openrouter)
 	}
+
+	// And the cap still caps. A model refuses a request for more than it will produce with a
+	// 400 naming itself, so room for thinking has to come out of the ceiling and not on top.
+	for _, reminders := range []int{0, 1, 17, 40, 500} {
+		for _, p := range []gateway.Provider{gateway.OpenRouter, gateway.HuggingFace} {
+			if got := budget(p, reminders); got > gateway.MaxOutputTokens {
+				t.Errorf("budget(%s, %d) = %d, over the ceiling of %d",
+					p, reminders, got, gateway.MaxOutputTokens)
+			}
+		}
+	}
 }

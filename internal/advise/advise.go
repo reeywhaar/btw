@@ -276,6 +276,10 @@ func sentence(s string) string {
 // output than most models will produce in one go, and the honest answer is that the question
 // wants splitting rather than the ceiling raising — which is a thing to build when somebody
 // meets it, not before.
+//
+// It is applied last, to the whole number. A cap that room for thinking is added on top of is
+// not a cap, and the model answers a request over its own limit with a 400 rather than a
+// shorter answer.
 func budget(p gateway.Provider, reminders int) int {
-	return min(2000+1800*reminders, 32000) + p.ThinkingBudget()
+	return min(2000+1800*reminders+p.ThinkingBudget(), gateway.MaxOutputTokens)
 }
