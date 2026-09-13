@@ -164,6 +164,15 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
               {reminder.note}
             </span>
           )}
+          {/* The same line as the note, because it is the same kind of thing: something
+              underneath the sentence that is worth having and not worth reading first. Not a
+              row of pills — a label per reminder, at the size of the reminder, would make the
+              list look like a system for filing things. */}
+          {reminder.categories && reminder.categories.length > 0 && (
+            <span className="mt-0.5 block truncate text-sm text-faint">
+              {reminder.categories.join(", ")}
+            </span>
+          )}
         </button>
         {isBinned ? (
           // A word rather than a mark. Undo is the opposite of the thing just pressed, and an

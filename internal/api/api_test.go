@@ -1615,3 +1615,49 @@ func TestAnAccountChoosesItsServiceAndGetsThatServicesDefault(t *testing.T) {
 		t.Errorf("PUT with an unknown service = %s, want 400", resp.Status)
 	}
 }
+
+// The first thing to read the categories. They were stored because the question that produced
+// them is the rate-limited part, and until now nothing showed them.
+func TestAReminderCarriesWhatTheCompanionCalledIt(t *testing.T) {
+	h := newHarness(t)
+	p := h.signIn()
+	rem, err := h.store.CreateReminder(h.Context(), p.ID, "fix the shelf")
+	if err != nil {
+		t.Fatalf("CreateReminder(): %v", err)
+	}
+
+	var body struct {
+		Reminders []struct {
+			ID         string   `json:"id"`
+			Categories []string `json:"categories"`
+		} `json:"reminders"`
+	}
+
+	// Nothing said about it yet, which is every reminder on an instance with no companion.
+	decodeBody(t, h.do("GET", "/api/reminders", nil), &body)
+	if len(body.Reminders) != 1 || len(body.Reminders[0].Categories) != 0 {
+		t.Fatalf("reminders = %+v, want one with nothing said about it", body.Reminders)
+	}
+
+	curve := make(store.Curve, store.Days)
+	for d := range curve {
+		curve[d] = make([]float64, store.Windows)
+	}
+	if err := h.store.SetAdvice(h.Context(), []string{rem.ID}, map[string]store.Advice{
+		rem.ID: {Categories: []string{"repairs", "errands"}, Curve: curve},
+	}); err != nil {
+		t.Fatalf("SetAdvice(): %v", err)
+	}
+
+	decodeBody(t, h.do("GET", "/api/reminders", nil), &body)
+	if got := body.Reminders[0].Categories; len(got) != 2 || got[0] != "repairs" {
+		t.Errorf("categories = %v, want what the companion called it", got)
+	}
+
+	// The bin does not carry them: nothing there is being weighed.
+	h.do("POST", "/api/reminders/"+rem.ID+"/bin", nil).Body.Close()
+	decodeBody(t, h.do("GET", "/api/bin", nil), &body)
+	if len(body.Reminders) != 1 || len(body.Reminders[0].Categories) != 0 {
+		t.Errorf("bin = %+v, want no categories on something nothing is scheduling", body.Reminders)
+	}
+}

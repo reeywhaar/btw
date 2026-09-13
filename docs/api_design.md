@@ -154,9 +154,14 @@ a description is deleted without also retyping the sentence. It changes wording 
 reminder has its own route, and folding it in would make "fix this" and "I am finished with
 this" the same request.
 
-A reminder carries `id`, `text`, `note`, `created_at` and `binned_at`. It deliberately does
-**not** carry `last_nudged_at`: that is how the selection works, not something a person is meant
-to reason about, and showing it invites exactly the arithmetic this product exists to avoid.
+A reminder carries `id`, `text`, `note`, `categories`, `created_at` and `binned_at`. It
+deliberately does **not** carry `last_nudged_at`: that is how the selection works, not something
+a person is meant to reason about, and showing it invites exactly the arithmetic this product
+exists to avoid.
+
+`categories` is what the companion called it — empty on an instance with no companion, and on
+anything in the bin, where nothing is being weighed. It comes from `derived.db` and so is a read
+of its own rather than a join.
 
 **One route, where there were two.** `done` and `drop` ended a reminder identically and differed
 only in the word beside them — see [conventions.md](conventions.md#the-bin-is-a-place-not-a-state).

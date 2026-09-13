@@ -5,6 +5,8 @@ export type Reminder = {
   text: string;
   /** What the sentence could not hold. Never sent in a push. */
   note: string;
+  /** What the companion called it, or empty until it has been asked. */
+  categories: string[] | null;
   created_at: number;
   binned_at: number | null;
 };

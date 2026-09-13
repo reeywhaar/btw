@@ -414,8 +414,8 @@ things nobody meant to silence.
 
 ## What this does not do yet
 
-**Nothing reads the categories.** They are stored because the question that produced them is the
-rate-limited part. What they are for is a filter or a label, and neither exists.
+**Nothing filters by the categories.** They are shown under a reminder, at the size of its
+description, and that is all — there is nothing to search or group by.
 
 **A person is never told which hours were chosen for a particular reminder** outside _what it
 thinks_. That is defensible while it is only a weighting — btw shows no schedule — but the

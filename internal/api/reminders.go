@@ -7,10 +7,13 @@ import (
 	"btw/internal/store"
 )
 
-func reminderJSON(r store.Reminder) map[string]any {
+func reminderJSON(r store.Reminder, categories []string) map[string]any {
 	out := map[string]any{
 		"id":   r.ID,
 		"text": r.Text,
+		// What the companion called it, or nothing. The first thing to read them: they were
+		// stored because the question that produced them is the rate-limited part.
+		"categories": categories,
 		// What the sentence could not hold. Never sent in a push — a lock screen is the one
 		// place this deliberately does not appear.
 		"note":       r.Note,
@@ -34,9 +37,14 @@ func (s *Server) listReminders(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	advice, err := s.advice(r, list)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	out := make([]map[string]any, 0, len(list))
 	for _, rem := range list {
-		out = append(out, reminderJSON(rem))
+		out = append(out, reminderJSON(rem, advice[rem.ID].Categories))
 	}
 	// Never a bare array and never a count: the envelope is what lets a field be added
 	// later, and a "total" is the number this product exists not to show.
@@ -58,7 +66,9 @@ func (s *Server) createReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.adviceStale(r, principal(r).ID)
-	writeJSON(w, http.StatusCreated, reminderJSON(rem))
+	// Nothing has been said about it yet: it was written down a moment ago, and the round that
+	// would name it has only just been asked for.
+	writeJSON(w, http.StatusCreated, reminderJSON(rem, nil))
 }
 
 func (s *Server) updateReminder(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +108,15 @@ func (s *Server) updateReminder(w http.ResponseWriter, r *http.Request) {
 	}
 	// The text or the note changed, and the note is most of what the companion has to go on.
 	s.adviceStale(r, principal(r).ID)
-	writeJSON(w, http.StatusOK, reminderJSON(updated))
+	// What was said about it before the edit. The wording changed, so the answer is stale and
+	// another round is coming — but a label that vanishes on every save and returns half an
+	// hour later reads as a bug.
+	advice, err := s.advice(r, []store.Reminder{updated})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reminderJSON(updated, advice[updated.ID].Categories))
 }
 
 // endReminder is what both buttons reach. Done and Drop end a reminder identically; which
@@ -159,9 +177,26 @@ func (s *Server) listBin(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(list))
 	for _, rem := range list {
-		out = append(out, reminderJSON(rem))
+		// Not in the bin. Nothing there is being weighed, so what the companion made of it
+		// says nothing about what happens next.
+		out = append(out, reminderJSON(rem, nil))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"reminders": out})
+}
+
+// advice is what the companion made of these reminders, keyed by id.
+//
+// Two databases and no join, so it is its own read. Empty when nobody has a companion, which is
+// most instances and every account before it sets one up.
+func (s *Server) advice(r *http.Request, list []store.Reminder) (map[string]store.Advice, error) {
+	if len(list) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(list))
+	for i, rem := range list {
+		ids[i] = rem.ID
+	}
+	return s.store.AdviceFor(r.Context(), ids)
 }
 
 // emptyBin throws away everything in it now, rather than waiting thirty days.
