@@ -13,18 +13,31 @@ The choice is the **account's**, beside the key, because a key works with one of
 the other — picking the service instance-wide would strand anybody holding the wrong kind. A row
 written before there were two reads as OpenRouter, which is what it was.
 
-Each is told not to think, in its own language: `reasoning: {exclude}` on OpenRouter,
-`chat_template_kwargs: {thinking: false}` on Hugging Face, where it reaches the chat template a
-hybrid model keeps the switch in. Sending OpenRouter's field to the Hugging Face router would
-hand it to whichever provider serves the model, and a rejected unknown field is a `400` nobody
-can explain from the message.
+`response_format`, `seed` and `temperature` go to both. `reasoning: {exclude}` goes only to
+OpenRouter, whose models publish `reasoning` among their `supported_parameters`.
 
-**This is not a nicety.** Thinking counts against `max_tokens`, so a reasoning model that has
-not been told otherwise spends the whole ceiling thinking and is cut off before it writes any
-JSON. That arrives as *the answer was cut off before it finished* and reads like a budget that
-wants raising; raising it buys a slower failure.
+### Thinking
 
-`response_format`, `seed` and `temperature` go to both.
+Thinking counts against `max_tokens`. A model that thinks and has not been told not to spends
+the whole ceiling on it and is cut off before writing any JSON, which arrives as *the answer was
+cut off before it finished* and reads like a budget that wants raising.
+
+On OpenRouter it is switched off. On the Hugging Face router it cannot be, and the room is
+bought instead — `ThinkingBudget`, sixteen thousand tokens on top of the question's own.
+
+The field that would switch it off there, `chat_template_kwargs: {thinking: false}`, is refused
+outright by a model whose thinking mode is `required`:
+
+```
+`chat_template_kwargs.thinking` conflicts with thinking mode 'required'.
+```
+
+That is a `400` for the whole request rather than a field quietly ignored, so it cannot be sent
+speculatively — and nothing the router publishes says which models would refuse it. Its
+`/v1/models` gives, per provider, `status`, `context_length`, `pricing`, `is_free`,
+`supports_tools`, `supports_structured_output`, `first_token_latency_ms` and `throughput`.
+Nothing about thinking. OpenRouter's `/api/v1/models` does say, in `supported_parameters`, which
+is why only it is asked.
 
 ## The companion is an account's, not the instance's
 

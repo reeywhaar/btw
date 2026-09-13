@@ -257,10 +257,10 @@ func TestOnlyOpenRouterIsSentItsOwnFields(t *testing.T) {
 			if _, sent := body["reasoning"]; sent != tc.want {
 				t.Errorf("reasoning sent = %v, want %v", sent, tc.want)
 			}
-			// The same instruction in the other service's language. Without one of the two a
-			// thinking model spends the whole ceiling before it writes any JSON.
-			if _, sent := body["chat_template_kwargs"]; sent == tc.want {
-				t.Errorf("chat_template_kwargs sent = %v, want %v", sent, !tc.want)
+			// Never to Hugging Face: a model whose thinking mode is required refuses the
+			// whole request over this field rather than ignoring it.
+			if _, sent := body["chat_template_kwargs"]; sent {
+				t.Error("chat_template_kwargs was sent, which a required-thinking model refuses")
 			}
 			// What both accept, and what the answer being readable depends on.
 			if body["response_format"] == nil {

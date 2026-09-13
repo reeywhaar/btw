@@ -73,7 +73,7 @@ func Try(ctx context.Context, set gateway.Settings, via proxy.Settings) (Trial, 
 		return Trial{}, err
 	}
 
-	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(len(tryReminders)))
+	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(set.Provider, len(tryReminders)))
 	if err != nil {
 		return Trial{}, err
 	}

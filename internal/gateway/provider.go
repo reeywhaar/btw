@@ -80,22 +80,31 @@ func (p Provider) DefaultModel() string {
 
 // tune adds what this provider alone accepts.
 //
-// Both lines say the same thing — do not think — and they have to be said differently. A model
-// that thinks spends the ceiling on thinking and is cut off before it writes any JSON, which
-// arrives as "the answer was cut off" and looks like a budget that wants raising. Raising it
-// buys a slower failure.
+// Only OpenRouter is told not to think. Its models publish `reasoning` among their
+// `supported_parameters`, so the field is asked for where it is known to be read.
 //
-// `reasoning` is OpenRouter's own field, and the Hugging Face router would hand it to whichever
-// provider is serving the model — where a rejected unknown field is a 400 nobody can explain
-// from the message. `chat_template_kwargs` is what the Hugging Face stack reads instead: it
-// reaches the chat template, which is where a hybrid model like DeepSeek's keeps the switch.
-//
-// Neither is load-bearing. A service that ignores its own is no worse off than before it was
-// sent, and the truncation that follows says so in as many words.
+// Nothing equivalent goes to the Hugging Face router. `chat_template_kwargs.thinking` is what
+// its stack would read, and a model whose thinking mode is `required` refuses the whole request
+// over it — a 400 rather than a field quietly ignored. Its `/v1/models` describes context,
+// pricing, tools and structured output, and says nothing about thinking, so there is no way to
+// send it only where it would be accepted. See [Provider.ThinkingBudget].
 func (p Provider) tune(body map[string]any) {
 	if p == OpenRouter {
 		body["reasoning"] = map[string]any{"exclude": true}
-		return
 	}
-	body["chat_template_kwargs"] = map[string]any{"thinking": false}
+}
+
+// ThinkingBudget is the ceiling to allow for thinking that cannot be switched off.
+//
+// Thinking counts against max_tokens, so a model that must think and is given room only for an
+// answer spends the lot and is cut off before writing any JSON. Zero for OpenRouter, where
+// [Provider.tune] switches it off instead.
+//
+// Room rather than a refusal, because many models on the router think by default and the good
+// ones among them are worth asking.
+func (p Provider) ThinkingBudget() int {
+	if p == HuggingFace {
+		return 16000
+	}
+	return 0
 }

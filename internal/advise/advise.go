@@ -162,7 +162,7 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 		return err
 	}
 
-	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(len(reminders)))
+	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(set.Provider, len(reminders)))
 	if err != nil {
 		return err
 	}
@@ -276,6 +276,6 @@ func sentence(s string) string {
 // output than most models will produce in one go, and the honest answer is that the question
 // wants splitting rather than the ceiling raising — which is a thing to build when somebody
 // meets it, not before.
-func budget(reminders int) int {
-	return min(2000+1800*reminders, 32000)
+func budget(p gateway.Provider, reminders int) int {
+	return min(2000+1800*reminders, 32000) + p.ThinkingBudget()
 }

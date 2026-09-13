@@ -626,3 +626,20 @@ func TestAReminderLeftOutOfTheAnswerKeepsWhatItHad(t *testing.T) {
 		t.Errorf("weight = %v, want the answer before it kept", v)
 	}
 }
+
+// Thinking counts against max_tokens, and on the Hugging Face router it cannot be switched off:
+// the field that would is refused outright by a model whose thinking mode is required, and
+// nothing the service publishes says which models those are. So the room is bought instead.
+func TestAServiceThatCannotStopThinkingIsGivenRoomToThink(t *testing.T) {
+	openrouter := budget(gateway.OpenRouter, 4)
+	huggingface := budget(gateway.HuggingFace, 4)
+
+	if huggingface <= openrouter {
+		t.Errorf("hugging face = %d, openrouter = %d, want room for thinking", huggingface, openrouter)
+	}
+	// Enough that thinking and an answer both fit, or the ceiling is spent before any JSON is
+	// written and the round comes back as "cut off".
+	if huggingface-openrouter < 8000 {
+		t.Errorf("room for thinking = %d, want enough to be worth having", huggingface-openrouter)
+	}
+}
