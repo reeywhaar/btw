@@ -164,12 +164,12 @@ function Row({ reminder, onDone }: { reminder: Reminder; onDone: () => void }) {
               {reminder.note}
             </span>
           )}
-          {/* The same line as the note, because it is the same kind of thing: something
-              underneath the sentence that is worth having and not worth reading first. Not a
-              row of pills — a label per reminder, at the size of the reminder, would make the
-              list look like a system for filing things. */}
+          {/* Smaller than the note, which is itself smaller than the sentence. The note is
+              something a person wrote and the categories are something a model guessed, so
+              they sit a step further down. Not a row of pills either — labels at the size of
+              the reminder would make the list look like a system for filing things. */}
           {reminder.categories && reminder.categories.length > 0 && (
-            <span className="mt-0.5 block truncate text-sm text-faint">
+            <span className="mt-0.5 block truncate text-xs text-faint">
               {reminder.categories.join(", ")}
             </span>
           )}
