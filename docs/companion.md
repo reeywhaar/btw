@@ -171,13 +171,20 @@ cohere.
 almost all of it the curve, and a model refuses a request over its own limit outright rather
 than answering shorter — so the batch is sized to what fits under `MaxOutputTokens`:
 
-| | fits | per question |
-| --- | --- | --- |
-| OpenRouter | 10 | 20,000 tokens |
-| Hugging Face | 7 | 30,600 tokens |
+| | fits | batch | fold |
+| --- | --- | --- | --- |
+| OpenRouter | 16 | 10 | 5 |
+| Hugging Face | 7 | 4 | 2 |
 
 Fewer on Hugging Face because thinking cannot be switched off there and comes out of the same
-ceiling. Most people are one question either way.
+ceiling — so 45 reminders is four questions on one service and eleven on the other. That is the
+price of a model that must think, and the number to revisit is `ThinkingBudget` rather than the
+batch.
+
+**A small remainder folds into the batch before it** rather than becoming a question of its own.
+A last batch of one spends a whole request, against a quota of fifty a day, to ask about a
+single reminder — and the answer is no better for being alone. The fold is half the batch, so on
+OpenRouter 15 is one question, 16 is `10 + 6`, 45 is `10 10 10 15` and 46 is `10 10 10 10 6`.
 
 **A failed batch stops the round.** The failure is almost always the key or the quota, and both
 are answers about every remaining batch, so working through them spends the quota to be told the

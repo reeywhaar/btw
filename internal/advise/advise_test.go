@@ -705,9 +705,10 @@ func TestALongListIsAskedInBatches(t *testing.T) {
 	g.start(t)
 	adviser(st).Once(ctx)
 
-	want := (25 + BatchLimit - 1) / BatchLimit
-	if g.asked != want {
-		t.Errorf("asked %d times, want %d of at most %d", g.asked, want, BatchLimit)
+	size, fold := batchSize(gateway.OpenRouter)
+	want := plan(25, size, fold)
+	if g.asked != len(want) {
+		t.Errorf("asked %d times, want %d — %v", g.asked, len(want), want)
 	}
 
 	// Every one of them answered for, across the batches, and written as one set.
@@ -771,5 +772,57 @@ func TestABatchThatFailsKeepsWhatTheOnesBeforeItAnswered(t *testing.T) {
 	}
 	if !state.Stale || state.Error == "" {
 		t.Errorf("state = %+v, want it still owed and the refusal recorded", state)
+	}
+}
+
+// A remainder small enough to fold goes onto the batch before it. Otherwise a list of 41 ends
+// with a whole request, against a quota of fifty a day, asking about one reminder.
+func TestASmallRemainderIsFoldedIntoTheBatchBeforeIt(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want []int
+	}{
+		{1, []int{1}},
+		{9, []int{9}},
+		{10, []int{10}},
+		// The threshold: five folds, six is its own question.
+		{15, []int{15}},
+		{16, []int{10, 6}},
+		{45, []int{10, 10, 10, 15}},
+		{46, []int{10, 10, 10, 10, 6}},
+		// The case this exists for.
+		{41, []int{10, 10, 10, 11}},
+		{20, []int{10, 10}},
+	} {
+		got := plan(tc.n, 10, 5)
+		if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Errorf("plan(%d) = %v, want %v", tc.n, got, tc.want)
+		}
+		total := 0
+		for _, n := range got {
+			total += n
+			if n < 1 {
+				t.Errorf("plan(%d) = %v, holds an empty question", tc.n, got)
+			}
+		}
+		if total != tc.n {
+			t.Errorf("plan(%d) = %v, covers %d of them", tc.n, got, total)
+		}
+	}
+}
+
+// However the list is split, no question may ask for more than a model will answer — a batch
+// grown by a fold included.
+func TestNoBatchEverExceedsWhatAModelWillAnswer(t *testing.T) {
+	for _, p := range []gateway.Provider{gateway.OpenRouter, gateway.HuggingFace} {
+		size, fold := batchSize(p)
+		for n := 1; n <= 200; n++ {
+			for _, batch := range plan(n, size, fold) {
+				if got := budget(p, batch); got > gateway.MaxOutputTokens {
+					t.Fatalf("%s: a batch of %d out of %d asks for %d, over %d",
+						p, batch, n, got, gateway.MaxOutputTokens)
+				}
+			}
+		}
 	}
 }

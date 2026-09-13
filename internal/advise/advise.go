@@ -16,7 +16,6 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
-	"slices"
 	"time"
 
 	"btw/internal/gateway"
@@ -181,7 +180,11 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 		failed    error
 		asked     int
 	)
-	for chunk := range slices.Chunk(reminders, batchSize(set.Provider)) {
+	size, fold := batchSize(set.Provider)
+	for _, n := range plan(len(reminders), size, fold) {
+		chunk := reminders[:n]
+		reminders = reminders[n:]
+
 		part, res, err := a.ask(ctx, set, via, rh, chunk)
 		asked++
 		tokens += res.Tokens
@@ -233,7 +236,7 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 
 	// No reminder text and nothing said about one, the same rule the nudge log follows.
 	a.Log.Info("advised", "principal", principalID, "model", model,
-		"reminders", len(reminders), "batches", asked, "answered", len(advice),
+		"reminders", len(ids), "batches", asked, "answered", len(advice),
 		"dropped", dropped, "carried", carried,
 		// The shapes and not the answers: "7x24" says what to change about the question.
 		"misshapen", misshapen, "tokens", tokens)
@@ -351,20 +354,50 @@ const (
 	// answerPerReminder is almost entirely the curve.
 	answerPerReminder = 1800
 
-	// BatchLimit is the most reminders put in one question.
+	// BatchLimit is the most reminders a question is meant to carry.
 	//
-	// Not only about tokens: the longer the list, the more a model treats the tail as
-	// something to get through. Ten is short enough to be answered properly and long enough
-	// that most people are one question.
+	// Not only about tokens: the longer the list, the more a model treats the tail as something
+	// to get through. Ten is short enough to be answered properly and long enough that most
+	// people are one question.
 	BatchLimit = 10
 )
 
-// batchSize is how many reminders go in one question, which is [BatchLimit] or as many as the
-// ceiling leaves room for — whichever is smaller.
+// batchSize is how many reminders go in one question, and how few are worth folding into the
+// one before rather than asked on their own.
 //
 // Derived rather than stated, because the room is not the same on both services: where thinking
-// cannot be switched off it comes out of the same ceiling, so fewer answers fit beside it.
-func batchSize(p gateway.Provider) int {
+// cannot be switched off it comes out of the same ceiling, so fewer answers fit beside it. A
+// batch may grow by the fold, so the two together have to fit — which is what the two thirds
+// is for.
+func batchSize(p gateway.Provider) (size, fold int) {
 	fits := (gateway.MaxOutputTokens - p.ThinkingBudget() - answerBase) / answerPerReminder
-	return max(1, min(BatchLimit, fits))
+	size = max(1, min(BatchLimit, fits*2/3))
+	return size, size / 2
+}
+
+// plan is the size of each question n reminders are asked in.
+//
+// A remainder small enough to fold goes onto the batch before it rather than becoming a
+// question of its own: a last batch of one costs a whole request against a daily quota to ask
+// about a single reminder, and the answer is no better for being alone.
+//
+//	15 → 15          45 → 10 10 10 15
+//	16 → 10 6        46 → 10 10 10 10 6
+func plan(n, size, fold int) []int {
+	full, rem := n/size, n%size
+	if full == 0 {
+		return []int{n}
+	}
+	sizes := make([]int, 0, full+1)
+	if rem != 0 && rem <= fold {
+		full--
+		rem += size
+	}
+	for range full {
+		sizes = append(sizes, size)
+	}
+	if rem != 0 {
+		sizes = append(sizes, rem)
+	}
+	return sizes
 }
