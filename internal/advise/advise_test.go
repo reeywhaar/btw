@@ -22,6 +22,10 @@ type upstream struct {
 	prompt string
 	reply  string
 	status int
+
+	// answer, when set, replies to each question in turn — for the tests about batching, where
+	// one fixed reply would be an answer to a question that was never asked.
+	answer func(question string, nth int) (string, int)
 }
 
 func (g *upstream) start(t *testing.T) {
@@ -31,6 +35,17 @@ func (g *upstream) start(t *testing.T) {
 		g.asked++
 		g.prompt = string(body)
 		w.Header().Set("Content-Type", "application/json")
+		if g.answer != nil {
+			reply, status := g.answer(string(body), g.asked)
+			if status != 0 && status != http.StatusOK {
+				w.WriteHeader(status)
+				fmt.Fprintf(w, `{"error":{"code":%d,"message":"%s"}}`, status, http.StatusText(status))
+				return
+			}
+			io.WriteString(w, `{"model":"m","usage":{"total_tokens":120},
+				"choices":[{"finish_reason":"stop","message":{"content":`+quote(reply)+`}}]}`)
+			return
+		}
 		if g.status != 0 && g.status != http.StatusOK {
 			w.WriteHeader(g.status)
 			// The code in the body matches the status, as OpenRouter's does. They are read
@@ -652,5 +667,109 @@ func TestAServiceThatCannotStopThinkingIsGivenRoomToThink(t *testing.T) {
 					p, reminders, got, gateway.MaxOutputTokens)
 			}
 		}
+	}
+}
+
+// answerAsked replies to whichever reminders the question actually carried, so a batch is
+// answered rather than handed somebody else's ids.
+func answerAsked(ids []string) func(string, int) (string, int) {
+	return func(question string, _ int) (string, int) {
+		var entries []string
+		for _, id := range ids {
+			if strings.Contains(question, id) {
+				entries = append(entries, `{"id":"`+id+`","curve":`+curve(0.8)+`}`)
+			}
+		}
+		return `{"results":[` + strings.Join(entries, ",") + `]}`, 0
+	}
+}
+
+// One question for a long list asks for more output than a model will produce in one go, and a
+// model refuses a request over its own ceiling outright rather than answering shorter.
+func TestALongListIsAskedInBatches(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
+
+	var ids []string
+	for i := range 25 {
+		r, err := st.CreateReminder(ctx, p.ID, fmt.Sprintf("reminder %d", i))
+		if err != nil {
+			t.Fatalf("CreateReminder(): %v", err)
+		}
+		ids = append(ids, r.ID)
+	}
+
+	g := &upstream{answer: answerAsked(ids)}
+	g.start(t)
+	adviser(st).Once(ctx)
+
+	want := (25 + BatchLimit - 1) / BatchLimit
+	if g.asked != want {
+		t.Errorf("asked %d times, want %d of at most %d", g.asked, want, BatchLimit)
+	}
+
+	// Every one of them answered for, across the batches, and written as one set.
+	got, err := st.AdviceFor(ctx, ids)
+	if err != nil {
+		t.Fatalf("AdviceFor(): %v", err)
+	}
+	for _, id := range ids {
+		if !got[id].Curve.Valid() {
+			t.Fatalf("%s has no readable advice after a batched round", id)
+		}
+	}
+}
+
+// A key that stops working fails every batch, so working through the rest spends the quota to
+// be told the same thing. What earlier batches managed is still worth keeping.
+func TestABatchThatFailsKeepsWhatTheOnesBeforeItAnswered(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := person(t, st, "misha")
+	st.SetCompanion(ctx, p.ID, gateway.Settings{APIKey: "k"})
+
+	var ids []string
+	for i := range 25 {
+		r, _ := st.CreateReminder(ctx, p.ID, fmt.Sprintf("reminder %d", i))
+		ids = append(ids, r.ID)
+	}
+
+	answered := answerAsked(ids)
+	g := &upstream{answer: func(question string, nth int) (string, int) {
+		if nth > 1 {
+			return "", http.StatusUnauthorized
+		}
+		return answered(question, nth)
+	}}
+	g.start(t)
+	adviser(st).Once(ctx)
+
+	if g.asked != 2 {
+		t.Errorf("asked %d times, want it to stop at the first refusal", g.asked)
+	}
+
+	got, err := st.AdviceFor(ctx, ids)
+	if err != nil {
+		t.Fatalf("AdviceFor(): %v", err)
+	}
+	kept := 0
+	for _, id := range ids {
+		if got[id].Curve.Valid() {
+			kept++
+		}
+	}
+	if kept != BatchLimit {
+		t.Errorf("kept %d, want the first batch's %d written despite the failure", kept, BatchLimit)
+	}
+
+	// And the round is not marked answered, so the next pass finishes it.
+	state, err := st.Advice(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("Advice(): %v", err)
+	}
+	if !state.Stale || state.Error == "" {
+		t.Errorf("state = %+v, want it still owed and the refusal recorded", state)
 	}
 }

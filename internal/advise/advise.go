@@ -15,9 +15,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"btw/internal/gateway"
+	"btw/internal/proxy"
 	"btw/internal/rhythm"
 	"btw/internal/store"
 )
@@ -157,28 +160,46 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	if err != nil {
 		return err
 	}
-	question, err := User(set.About, rh, reminders)
-	if err != nil {
-		return err
-	}
-
-	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(set.Provider, len(reminders)))
-	if err != nil {
-		return err
-	}
-
 	ids := make([]string, len(reminders))
-	known := make(map[string]bool, len(reminders))
 	for i, r := range reminders {
 		ids[i] = r.ID
-		known[r.ID] = true
 	}
 
-	advice, dropped, misshapen := parse(reply, known)
+	// Asked in batches, because one question for a long list asks for more output than a model
+	// will produce in one go — and a model refuses a request over its own ceiling outright
+	// rather than answering shorter.
+	//
+	// A failed batch stops the asking rather than working through the rest: the failure is
+	// almost always the key or the quota, and both are answers about every batch. What earlier
+	// batches managed is still written, and the round stays stale so the next pass finishes it.
+	var (
+		advice    = make(map[string]store.Advice)
+		misshapen []string
+		dropped   int
+		tokens    int
+		model     string
+		failed    error
+		asked     int
+	)
+	for chunk := range slices.Chunk(reminders, batchSize(set.Provider)) {
+		part, res, err := a.ask(ctx, set, via, rh, chunk)
+		asked++
+		tokens += res.Tokens
+		if res.Model != "" {
+			model = res.Model
+		}
+		if err != nil {
+			failed = err
+			break
+		}
+		maps.Copy(advice, part.advice)
+		misshapen = append(misshapen, part.misshapen...)
+		dropped += part.dropped
+	}
 
 	// Stale advice is worth more than none: the *answer* failed, not the question. A deliberate
 	// "no shape" still overwrites, so the only thing carried forward is an answer that could not
-	// be understood or did not arrive.
+	// be understood or did not arrive. A batch that never got an answer is the same case.
 	previous, err := a.Store.AdviceFor(ctx, ids)
 	if err != nil {
 		return err
@@ -201,17 +222,55 @@ func (a *Adviser) advise(ctx context.Context, principalID string) error {
 	if err := a.Store.SetAdvice(ctx, ids, advice); err != nil {
 		return err
 	}
+	if failed != nil {
+		// Not recorded as answered, so the flag stays up and the next pass asks again. What did
+		// arrive is already written above.
+		return failed
+	}
 	if err := a.Store.RecordAdvised(ctx, principalID, a.Store.Now()); err != nil {
 		return err
 	}
 
 	// No reminder text and nothing said about one, the same rule the nudge log follows.
-	a.Log.Info("advised", "principal", principalID, "model", res.Model,
-		"reminders", len(reminders), "answered", len(advice), "dropped", dropped,
-		"carried", carried,
+	a.Log.Info("advised", "principal", principalID, "model", model,
+		"reminders", len(reminders), "batches", asked, "answered", len(advice),
+		"dropped", dropped, "carried", carried,
 		// The shapes and not the answers: "7x24" says what to change about the question.
-		"misshapen", misshapen, "tokens", res.Tokens)
+		"misshapen", misshapen, "tokens", tokens)
 	return nil
+}
+
+// round is what one batch came back with.
+type round struct {
+	advice    map[string]store.Advice
+	misshapen []string
+	dropped   int
+}
+
+// ask puts one batch and reads the answer.
+//
+// `known` is this batch's ids alone. An id from another batch is one of the same person's, but
+// taking it here would let one answer overwrite another's — and a model that echoes an id back
+// out of the wrong question is not answering about it.
+func (a *Adviser) ask(ctx context.Context, set gateway.Settings, via proxy.Settings,
+	rh store.Rhythm, reminders []store.Reminder) (round, gateway.Result, error) {
+
+	question, err := User(set.About, rh, reminders)
+	if err != nil {
+		return round{}, gateway.Result{}, err
+	}
+
+	reply, res, err := gateway.Ask(ctx, set, via, System(), question, budget(set.Provider, len(reminders)))
+	if err != nil {
+		return round{}, res, err
+	}
+
+	known := make(map[string]bool, len(reminders))
+	for _, r := range reminders {
+		known[r.ID] = true
+	}
+	advice, dropped, misshapen := parse(reply, known)
+	return round{advice: advice, misshapen: misshapen, dropped: dropped}, res, nil
 }
 
 // tell lets somebody know their companion has stopped working, at most once per episode.
@@ -279,7 +338,33 @@ func sentence(s string) string {
 //
 // It is applied last, to the whole number. A cap that room for thinking is added on top of is
 // not a cap, and the model answers a request over its own limit with a 400 rather than a
-// shorter answer.
+// shorter answer. With [batchSize] bounding the question it is a backstop rather than the
+// working limit.
 func budget(p gateway.Provider, reminders int) int {
-	return min(2000+1800*reminders+p.ThinkingBudget(), gateway.MaxOutputTokens)
+	return min(answerBase+answerPerReminder*reminders+p.ThinkingBudget(), gateway.MaxOutputTokens)
+}
+
+const (
+	// answerBase is the room one answer needs before any reminder is in it.
+	answerBase = 2000
+
+	// answerPerReminder is almost entirely the curve.
+	answerPerReminder = 1800
+
+	// BatchLimit is the most reminders put in one question.
+	//
+	// Not only about tokens: the longer the list, the more a model treats the tail as
+	// something to get through. Ten is short enough to be answered properly and long enough
+	// that most people are one question.
+	BatchLimit = 10
+)
+
+// batchSize is how many reminders go in one question, which is [BatchLimit] or as many as the
+// ceiling leaves room for — whichever is smaller.
+//
+// Derived rather than stated, because the room is not the same on both services: where thinking
+// cannot be switched off it comes out of the same ceiling, so fewer answers fit beside it.
+func batchSize(p gateway.Provider) int {
+	fits := (gateway.MaxOutputTokens - p.ThinkingBudget() - answerBase) / answerPerReminder
+	return max(1, min(BatchLimit, fits))
 }

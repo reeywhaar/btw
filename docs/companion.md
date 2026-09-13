@@ -162,10 +162,27 @@ that the model which answered is the one reported, and that a proxy's HTML error
 
 ## What it is asked
 
-Once per person, not once per reminder: one question carries the whole open list, what they
-wrote about themselves and the hours they are reachable in. Asking separately would be one
-request each against fifty a day, and would throw away the context that makes the answers
-cohere — that these forty things belong to one week.
+In batches, not once per reminder: a question carries up to ten of them, along with what the
+person wrote about themselves and the hours they are reachable in. Asking one at a time would be
+a request each against fifty a day, and would throw away the context that makes the answers
+cohere.
+
+**Ten is a ceiling on the answer, not a preference.** Output is roughly 1,800 tokens a reminder,
+almost all of it the curve, and a model refuses a request over its own limit outright rather
+than answering shorter — so the batch is sized to what fits under `MaxOutputTokens`:
+
+| | fits | per question |
+| --- | --- | --- |
+| OpenRouter | 10 | 20,000 tokens |
+| Hugging Face | 7 | 30,600 tokens |
+
+Fewer on Hugging Face because thinking cannot be switched off there and comes out of the same
+ceiling. Most people are one question either way.
+
+**A failed batch stops the round.** The failure is almost always the key or the quota, and both
+are answers about every remaining batch, so working through them spends the quota to be told the
+same thing four more times. What earlier batches answered is still written, and the round is not
+marked answered — so the flag stays up and the next pass finishes it.
 
 The prompt is a **template constant** in `internal/advise`, not string-building. It is the
 product here, so it is written as prose in one block that reads as what the model reads.
