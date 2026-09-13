@@ -13,10 +13,18 @@ The choice is the **account's**, beside the key, because a key works with one of
 the other — picking the service instance-wide would strand anybody holding the wrong kind. A row
 written before there were two reads as OpenRouter, which is what it was.
 
-`reasoning: {exclude}` is OpenRouter's own field and is sent only there. The Hugging Face router
-hands the body to whichever provider serves the model, and a field one of them rejects is a
-`400` nobody can explain from the message. `response_format`, `seed` and `temperature` go to
-both.
+Each is told not to think, in its own language: `reasoning: {exclude}` on OpenRouter,
+`chat_template_kwargs: {thinking: false}` on Hugging Face, where it reaches the chat template a
+hybrid model keeps the switch in. Sending OpenRouter's field to the Hugging Face router would
+hand it to whichever provider serves the model, and a rejected unknown field is a `400` nobody
+can explain from the message.
+
+**This is not a nicety.** Thinking counts against `max_tokens`, so a reasoning model that has
+not been told otherwise spends the whole ceiling thinking and is cut off before it writes any
+JSON. That arrives as *the answer was cut off before it finished* and reads like a budget that
+wants raising; raising it buys a slower failure.
+
+`response_format`, `seed` and `temperature` go to both.
 
 ## The companion is an account's, not the instance's
 

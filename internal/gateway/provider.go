@@ -80,11 +80,22 @@ func (p Provider) DefaultModel() string {
 
 // tune adds what this provider alone accepts.
 //
-// `reasoning` is OpenRouter's own. The Hugging Face router hands the body to whichever provider
-// is serving the model, and a field that one of them rejects is a 400 nobody can explain from
-// the message.
+// Both lines say the same thing — do not think — and they have to be said differently. A model
+// that thinks spends the ceiling on thinking and is cut off before it writes any JSON, which
+// arrives as "the answer was cut off" and looks like a budget that wants raising. Raising it
+// buys a slower failure.
+//
+// `reasoning` is OpenRouter's own field, and the Hugging Face router would hand it to whichever
+// provider is serving the model — where a rejected unknown field is a 400 nobody can explain
+// from the message. `chat_template_kwargs` is what the Hugging Face stack reads instead: it
+// reaches the chat template, which is where a hybrid model like DeepSeek's keeps the switch.
+//
+// Neither is load-bearing. A service that ignores its own is no worse off than before it was
+// sent, and the truncation that follows says so in as many words.
 func (p Provider) tune(body map[string]any) {
 	if p == OpenRouter {
 		body["reasoning"] = map[string]any{"exclude": true}
+		return
 	}
+	body["chat_template_kwargs"] = map[string]any{"thinking": false}
 }

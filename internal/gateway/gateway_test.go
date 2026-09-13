@@ -256,6 +256,11 @@ func TestOnlyOpenRouterIsSentItsOwnFields(t *testing.T) {
 			if _, sent := body["reasoning"]; sent != tc.want {
 				t.Errorf("reasoning sent = %v, want %v", sent, tc.want)
 			}
+			// The same instruction in the other service's language. Without one of the two a
+			// thinking model spends the whole ceiling before it writes any JSON.
+			if _, sent := body["chat_template_kwargs"]; sent == tc.want {
+				t.Errorf("chat_template_kwargs sent = %v, want %v", sent, !tc.want)
+			}
 			// What both accept, and what the answer being readable depends on.
 			if body["response_format"] == nil {
 				t.Error("response_format was not sent")
