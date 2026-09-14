@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -151,7 +152,7 @@ func through(req *http.Request, s Settings) (*http.Request, error) {
 	target.Path = "/proxy"
 	target.RawQuery = url.Values{
 		"url":   {req.URL.String()},
-		"token": {s.Token},
+		"token": {nonced(s.Token, time.Now())},
 		// Without it proxio adds an X-Forwarded-For naming the machine it stands in for.
 		"hide": {"1"},
 	}.Encode()
@@ -162,6 +163,39 @@ func through(req *http.Request, s Settings) (*http.Request, error) {
 	out.Host = ""
 	return out, nil
 }
+
+// nonced proves the secret rather than sending it.
+//
+// The credential has to travel in the URL — that is what lets one proxio stand in front of
+// another — and a URL is the thing that ends up in a log, a referrer and an error message. What
+// goes on the wire is a timestamp and a hash over it, good for five minutes either side, so a
+// line copied out of a log is spent by the time anybody reads it.
+//
+//	pxc_<unix seconds>.<first 8 of the key>.<sha256(nonce.id.key)>
+//
+// The key is sha256 of the secret, which is what proxio stores — so the hash is over something
+// it already has and the secret itself is never derivable from what was sent. The key goes last
+// in the hashed string, where a length extension cannot reach it.
+func nonced(secret string, at time.Time) string {
+	key := sum(secret)
+	id := key[:idLen]
+	nonce := strconv.FormatInt(at.Unix(), 10)
+	return noncedPrefix + nonce + sep + id + sep + sum(nonce+sep+id+sep+key)
+}
+
+func sum(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+const (
+	noncedPrefix = "pxc_"
+	sep          = "."
+
+	// idLen is how much of the key names which token this is, so proxio can find the one to
+	// check against rather than hashing the nonce against every token it holds.
+	idLen = 8
+)
 
 // clients keeps one HTTP client per SOCKS endpoint, since a transport is where the connection
 // pool lives. Keyed by what the connection depends on and not by the row, so a corrected

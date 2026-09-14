@@ -61,6 +61,19 @@ address is the host only, so pasting the whole example URL works and the credent
 moved out of the address. Method, headers and body are inherited, which is what makes it usable
 here: the gateway wants a `POST` with an `Authorization` header.
 
+The `token` **proves the secret rather than being it**:
+
+```
+pxc_<unix seconds>.<first 8 of the key>.<sha256(nonce.id.key)>
+```
+
+where the key is `sha256(secret)` — what proxio already stores, so the hash is over something it
+has and the secret is not derivable from what was sent. The key goes last, where a length
+extension cannot reach it. Good for five minutes either side, so a line copied out of a log is
+spent by the time anybody reads it. The credential has to travel in the URL, because that is
+what lets one proxio stand in front of another, and a URL is exactly the thing that ends up in
+logs and referrers.
+
 **SOCKS5** replaces the dialer, so a response already points at the gateway. `socks5h` is
 accepted and behaves identically — the dialer sends the hostname rather than resolving locally,
 so the scheme names the behaviour rather than selecting it. That is the useful one anyway: a
@@ -85,6 +98,9 @@ Three places would otherwise write one down, and each has a test.
   `?url=…&token=…`. It is pointed back at what was asked for before it is returned.
 - **The log.** `net/http` wraps every transport failure in a `*url.Error` printing what it
   dialled. The cause is kept and the address dropped.
+
+All three still matter with a nonced token — five minutes is short, not nothing, and the three
+places would otherwise write down a working credential.
 
 ## Where it lives
 

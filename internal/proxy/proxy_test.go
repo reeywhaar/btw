@@ -2,14 +2,18 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A real proxio, a real SOCKS5 server and a real target over loopback sockets, on the same
@@ -38,7 +42,7 @@ func (p *proxio) start(t *testing.T) string {
 		body, _ := io.ReadAll(r.Body)
 		p.sawBody = string(body)
 
-		if p.token != "" && p.sawToken != p.token {
+		if p.token != "" && !verify(p.token, p.sawToken, time.Now()) {
 			w.Header().Set("X-Proxio-Error", "bad token")
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -112,8 +116,8 @@ func TestProxioCarriesTheMethodTheBodyAndTheHeaders(t *testing.T) {
 	if relay.sawAuth != "Bearer sk-or-v1-abc" {
 		t.Errorf("Authorization = %q, want it carried through", relay.sawAuth)
 	}
-	if relay.sawToken != "px_secret" {
-		t.Errorf("token = %q, want the credential sent as its own parameter", relay.sawToken)
+	if !verify("px_secret", relay.sawToken, time.Now()) {
+		t.Errorf("token = %q, want the credential proved as its own parameter", relay.sawToken)
 	}
 	if *body != `{"model":"m"}` {
 		t.Errorf("the target read %q, want the body to have reached it", *body)
@@ -380,5 +384,82 @@ func TestCorrectingAPasswordDoesNotReuseTheOldClient(t *testing.T) {
 	// And the key does not carry the password into somewhere a panic would print it.
 	if strings.Contains(a, "old") {
 		t.Errorf("fingerprint = %q, which carries the credential", a)
+	}
+}
+
+// verify is proxio's side of the exchange, so the test asserts the credential is *provable*
+// rather than that it merely looks the part. Written out here rather than reaching for the
+// production helper, which would let the two agree on a mistake.
+func verify(secret, wire string, now time.Time) bool {
+	rest, found := strings.CutPrefix(wire, "pxc_")
+	if !found {
+		return false
+	}
+	parts := strings.Split(rest, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	nonce, id, mac := parts[0], parts[1], parts[2]
+
+	ts, err := strconv.ParseInt(nonce, 10, 64)
+	if err != nil {
+		return false
+	}
+	if d := now.Sub(time.Unix(ts, 0)); d > 5*time.Minute || d < -5*time.Minute {
+		return false
+	}
+
+	key := sha256.Sum256([]byte(secret))
+	stored := hex.EncodeToString(key[:])
+	if id != stored[:8] {
+		return false
+	}
+	want := sha256.Sum256([]byte(nonce + "." + id + "." + stored))
+	return mac == hex.EncodeToString(want[:])
+}
+
+// The credential has to travel in the URL — that is what lets one proxio stand in front of
+// another — and a URL is the thing that ends up in a log, a referrer and an error message. So
+// what goes on the wire proves the secret rather than being it.
+func TestTheSecretIsProvedRatherThanSent(t *testing.T) {
+	where, _, _ := target(t)
+	relay := &proxio{token: "px_secret"}
+	at := relay.start(t)
+
+	res, err := Send(t.Context(), post(t, where, `{"model":"m"}`), Settings{
+		Kind: Proxio, URL: at, Token: "px_secret", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Send(): %v", err)
+	}
+	defer res.Body.Close()
+
+	if relay.sawToken == "px_secret" {
+		t.Error("the secret itself was sent")
+	}
+	if !strings.HasPrefix(relay.sawToken, "pxc_") {
+		t.Errorf("token = %q, want the nonced form", relay.sawToken)
+	}
+	if !verify("px_secret", relay.sawToken, time.Now()) {
+		t.Errorf("token = %q, which proxio would refuse", relay.sawToken)
+	}
+}
+
+// Five minutes either side. A line copied out of a log is spent by the time anybody reads it,
+// which is the whole reason for sending a hash rather than the credential.
+func TestAProvedTokenGoesStale(t *testing.T) {
+	tok := nonced("px_secret", time.Now())
+	if !verify("px_secret", tok, time.Now()) {
+		t.Fatal("a token minted now does not verify now")
+	}
+	if verify("px_secret", tok, time.Now().Add(6*time.Minute)) {
+		t.Error("a token still verified six minutes later")
+	}
+	if verify("px_secret", tok, time.Now().Add(-6*time.Minute)) {
+		t.Error("a token verified six minutes before it was minted")
+	}
+	// And it proves one secret and not another.
+	if verify("px_other", tok, time.Now()) {
+		t.Error("a token minted for one secret proved another")
 	}
 }
