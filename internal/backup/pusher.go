@@ -102,27 +102,21 @@ func (p *Pusher) Once(ctx context.Context) error {
 		return err
 	}
 
-	// main.db alone is snapshotted first, and only to be hashed.
-	//
-	// The question is what is *in* main.db, and there is nothing cheaper that answers it: an
-	// mtime moves for a write that changed nothing, and a page count is shared by databases
-	// that differ. `VACUUM INTO` is the read either way. Doing it on main alone means an
-	// instance carrying derived.db is not rebuilding it every five minutes to find out whether
-	// anybody touched a reminder.
-	probe, err := Build(ctx, p.Store, false, now)
+	// Before the snapshot, so a write landing between the two costs a redundant upload next
+	// pass rather than a missed one.
+	digest, err := p.Store.MainDigest(ctx)
 	if err != nil {
 		return err
 	}
-	changed := !bytes.Equal(last, probe.Digest)
+	changed := !bytes.Equal(last, digest)
 
 	// And the floor, which only "all" has. It is a heartbeat rather than a guard on anything:
 	// an agent told how often to expect an archive can say a btw has stopped backing up, and
 	// with copies arriving only when somebody writes something down it cannot tell a broken
 	// instance from a quiet one.
 	//
-	// A push clears both at once. The digest it records is the one the probe just took, so the
-	// change that was waiting for its delay has been sent — there is nothing left pending, and
-	// the floor starts again from now.
+	// A push clears both at once: the change that was waiting has been sent, and the floor
+	// starts again from now.
 	period := p.Mode.Period()
 	due := period > 0 && !at.IsZero() && now.Sub(at) >= period
 
@@ -138,18 +132,18 @@ func (p *Pusher) Once(ctx context.Context) error {
 	}
 
 	name := Filename(now)
-	if err := Push(ctx, p.client(), p.URL, name, archive.Body); err != nil {
+	if err := Push(ctx, p.client(), p.URL, name, archive); err != nil {
 		return err
 	}
 
 	// Only now. Recorded before the agent accepted it, a rejected upload would leave btw
 	// believing a copy exists that does not — and in the change-driven modes the next write to
 	// main.db would be the only thing that ever made it try again.
-	if err := p.Store.RecordBackup(ctx, archive.Digest, now); err != nil {
+	if err := p.Store.RecordBackup(ctx, digest, now); err != nil {
 		return err
 	}
 
-	p.Log.Info("backed up", "name", name, "bytes", len(archive.Body),
+	p.Log.Info("backed up", "name", name, "bytes", len(archive),
 		"mode", p.Mode, "changed", changed, "first", at.IsZero())
 	return nil
 }

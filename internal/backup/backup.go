@@ -24,9 +24,9 @@
 // anywhere. derived.db is sessions, the nudge waiting to go out and the nudge log; it travels
 // *in* the archive when the operator asks for it, but it does not decide whether one is made.
 //
-// That costs less than it sounds. Sending a nudge writes to both, so the log of what went out
-// rides along with a change main.db has already noticed. What moves in derived.db alone is
-// somebody signing in and the scheduler picking a moment, and neither is worth an archive.
+// Nor the columns btw stamps into main.db itself as it delivers a nudge — see
+// [store.Store.MainDigest]. A nudge is not something anybody wrote down, and counting it sent
+// an archive after every one.
 package backup
 
 import (
@@ -34,7 +34,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -50,39 +49,20 @@ func Filename(t time.Time) string {
 	return app.Name + "-" + t.UTC().Format("20060102_150405") + ".tgz"
 }
 
-// Archive is one copy of the databases, and the digest that says which copy it is.
-type Archive struct {
-	Body []byte
-	// Digest identifies main.db's contents, and nothing else's.
-	//
-	// Taken from the vacuumed bytes rather than from the tarball, because a tarball carries a
-	// timestamp in its gzip header and in every entry — two archives of one unchanged database
-	// differ, which is exactly the question this is asked to answer. `VACUUM INTO` writes a
-	// database page by page in a defined order, so identical contents produce identical bytes;
-	// where that ever stopped being true the cost is a redundant upload rather than a missed
-	// one, which is the right way for this to fail.
-	Digest []byte
-}
-
 // Build renders the databases as a gzipped tar, in memory.
 //
 // A tar header needs its entry's size up front, so the databases have to be in hand anyway.
 // See [store.Store.Snapshot] for why this is `VACUUM INTO` rather than a copy of the files.
-func Build(ctx context.Context, st *store.Store, derived bool, now time.Time) (*Archive, error) {
+func Build(ctx context.Context, st *store.Store, derived bool, now time.Time) ([]byte, error) {
 	files, err := st.Snapshot(ctx, derived)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot: %w", err)
 	}
 
-	var digest []byte
 	var out bytes.Buffer
 	gz := gzip.NewWriter(&out)
 	tw := tar.NewWriter(gz)
 	for _, f := range files {
-		if f.Name == store.MainFile {
-			sum := sha256.Sum256(f.Data)
-			digest = sum[:]
-		}
 		// 0600 throughout: the archive carries every password hash on the instance and the
 		// VAPID private key, so an extracted copy should not be readable by anyone else. No
 		// directory entries, so extracting cannot re-chmod a data directory that already
@@ -106,10 +86,7 @@ func Build(ctx context.Context, st *store.Store, derived bool, now time.Time) (*
 	if err := gz.Close(); err != nil {
 		return nil, fmt.Errorf("close gzip: %w", err)
 	}
-	if digest == nil {
-		return nil, fmt.Errorf("the snapshot carried no %s", store.MainFile)
-	}
-	return &Archive{Body: out.Bytes(), Digest: digest}, nil
+	return out.Bytes(), nil
 }
 
 // maxReply is how much of a rejection is read back.

@@ -453,24 +453,50 @@ func TestRunStopsWithTheContext(t *testing.T) {
 	}
 }
 
-func TestTheDigestIsMainAloneSoDerivedDoesNotDriveIt(t *testing.T) {
-	// In a mode that carries derived.db, the recorded digest must still be main.db's: taken
-	// from the whole archive, it would never match the probe and every pass would send.
+func TestDeliveringANudgeIsNotACopy(t *testing.T) {
+	srv, side := newAgent(t)
 	st := testStore(t)
-	now := time.Now()
+	p := &Pusher{Store: st, Log: quiet(), URL: srv.URL, Mode: config.BackupRelaxed}
 
-	main, err := Build(t.Context(), st, false, now)
+	who, err := st.CreatePrincipal(t.Context(), "nudged", "a-long-enough-password", store.RoleUser)
 	if err != nil {
-		t.Fatalf("Build(main): %v", err)
+		t.Fatalf("CreatePrincipal(): %v", err)
 	}
-	both, err := Build(t.Context(), st, true, now)
+	r, err := st.CreateReminder(t.Context(), who.ID, "water the plants")
 	if err != nil {
-		t.Fatalf("Build(both): %v", err)
+		t.Fatalf("CreateReminder(): %v", err)
 	}
-	if !bytes.Equal(main.Digest, both.Digest) {
-		t.Error("the digest changes with what the archive carries, so an idle instance would upload forever")
+	d, err := st.RegisterDevice(t.Context(), who.ID, "https://push.example/1", "key", "auth", "phone", "client")
+	if err != nil {
+		t.Fatalf("RegisterDevice(): %v", err)
 	}
-	if len(both.Body) <= len(main.Body) {
-		t.Error("carrying derived.db did not make the archive bigger")
+	if err := p.Once(t.Context()); err != nil {
+		t.Fatalf("Once() #1: %v", err)
+	}
+
+	if err := st.StampNudged(t.Context(), r.ID, time.Now()); err != nil {
+		t.Fatalf("StampNudged(): %v", err)
+	}
+	if err := st.DeviceDelivered(t.Context(), d.ID); err != nil {
+		t.Fatalf("DeviceDelivered(): %v", err)
+	}
+	if err := st.DeviceFailed(t.Context(), d.ID, "gone quiet"); err != nil {
+		t.Fatalf("DeviceFailed(): %v", err)
+	}
+	if err := p.Once(t.Context()); err != nil {
+		t.Fatalf("Once() #2: %v", err)
+	}
+	if side.count() != 1 {
+		t.Fatalf("a delivered nudge sent %d archives, want 1", side.count())
+	}
+
+	if _, err := st.UpdateReminder(t.Context(), who.ID, r.ID, "water the plants twice", ""); err != nil {
+		t.Fatalf("UpdateReminder(): %v", err)
+	}
+	if err := p.Once(t.Context()); err != nil {
+		t.Fatalf("Once() #3: %v", err)
+	}
+	if side.count() != 2 {
+		t.Errorf("an edited reminder sent %d archives in all, want 2", side.count())
 	}
 }

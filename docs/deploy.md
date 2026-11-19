@@ -107,10 +107,15 @@ file-level copy of a running instance is a copy of a moment that never existed.
 
 ### When one goes out
 
-**When `main.db` has changed, and not otherwise.** btw looks every five minutes, hashes a
-fresh snapshot of `main.db`, and sends only if it differs from the copy the agent last
-accepted. An instance nobody has touched since Tuesday sends nothing, and a week of that costs
-one upload, not two thousand.
+**When `main.db` has changed, and not otherwise.** btw looks every five minutes, hashes what
+`main.db` holds, and sends only if it differs from the copy the agent last accepted. An
+instance nobody has touched since Tuesday sends nothing, and a week of that costs one upload,
+not two thousand.
+
+Delivering a nudge does not count. It stamps the reminder's `last_nudged_at` and the device's
+`last_ok_at`, `failure_count` and `last_error`, and the hash leaves those four out: they ride
+along with the next change somebody makes. A restore from that copy can nudge a reminder a
+little early, which is all they are for.
 
 Deciding this inside btw is the whole reason the archive is pushed rather than served. A
 container fetching on a loop from outside cannot know whether anything has been written; it
@@ -137,11 +142,8 @@ keypair, whose loss invalidates every push subscription on the instance at once 
 repaired by anybody re-registering. It is the file that has to survive.
 
 `derived.db` is sessions, the nudge waiting to go out, and the nudge log. It rides along in
-`relaxed` and `all` but never decides that a copy is due, and that costs less than it sounds:
-sending a nudge writes to *both* — the reminder's `last_nudged_at` in `main.db`, the log row in
-`derived.db` — so the record of what went out travels with a change `main.db` has already
-noticed. What moves in `derived.db` alone is somebody signing in and the scheduler picking a
-moment, and losing those costs a sign-in and one rescheduled nudge.
+`relaxed` and `all` but never decides that a copy is due. Losing what moved in it since the
+last copy costs a sign-in, a rescheduled nudge, and the log of nudges sent in between.
 
 **`all` is the only mode that sends when nothing has changed**, and the reason to want it is
 upstream of the archive. An agent told how often to expect one can report a btw that has

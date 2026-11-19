@@ -2,11 +2,16 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -69,6 +74,128 @@ func (s *Store) Snapshot(ctx context.Context, derived bool) ([]SnapshotFile, err
 		out = append(out, SnapshotFile{Name: source.name, Data: data})
 	}
 	return out, nil
+}
+
+// unattended is what btw writes into main.db on its own as it delivers a nudge. A copy is worth
+// taking when somebody changed something, and these ride along with the next one that is.
+var unattended = map[string][]string{
+	"reminders": {"last_nudged_at"},
+	"devices":   {"last_ok_at", "failure_count", "last_error"},
+}
+
+// MainDigest identifies what main.db holds, leaving out [unattended].
+func (s *Store) MainDigest(ctx context.Context) ([]byte, error) {
+	tx, err := s.main.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	h := sha256.New()
+	tables, err := digestSchema(ctx, tx, h)
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range tables {
+		if err := digestTable(ctx, tx, h, table); err != nil {
+			return nil, fmt.Errorf("digest %s: %w", table, err)
+		}
+	}
+	return h.Sum(nil), nil
+}
+
+func digestSchema(ctx context.Context, tx *sql.Tx, h io.Writer) ([]string, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT type, name, coalesce(sql, '') FROM sqlite_schema ORDER BY type, name`)
+	if err != nil {
+		return nil, fmt.Errorf("read the schema: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var kind, name, def string
+		if err := rows.Scan(&kind, &name, &def); err != nil {
+			return nil, err
+		}
+		digestValues(h, kind, name, def)
+		if kind == "table" && !strings.HasPrefix(name, "sqlite_") {
+			tables = append(tables, name)
+		}
+	}
+	return tables, rows.Err()
+}
+
+func digestTable(ctx context.Context, tx *sql.Tx, h io.Writer, table string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
+	if err != nil {
+		return err
+	}
+	var cols []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			rows.Close()
+			return err
+		}
+		if !slices.Contains(unattended[table], col) {
+			cols = append(cols, quoteIdent(col))
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+
+	order := make([]string, len(cols))
+	for i := range cols {
+		order[i] = strconv.Itoa(i + 1)
+	}
+	rows, err = tx.QueryContext(ctx, "SELECT "+strings.Join(cols, ", ")+" FROM "+quoteIdent(table)+
+		" ORDER BY "+strings.Join(order, ", "))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	digestValues(h, "table", table, strings.Join(cols, ","))
+	values := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range values {
+		ptrs[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return err
+		}
+		io.WriteString(h, "row ")
+		digestValues(h, values...)
+	}
+	return rows.Err()
+}
+
+func digestValues(h io.Writer, values ...any) {
+	for _, v := range values {
+		var b []byte
+		switch v := v.(type) {
+		case nil:
+		case []byte:
+			b = v
+		case string:
+			b = []byte(v)
+		default:
+			b = fmt.Append(nil, v)
+		}
+		fmt.Fprintf(h, "%T %d:", v, len(b))
+		h.Write(b)
+	}
+}
+
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // LastBackup is the digest of main.db as it was when a copy was last accepted by a backup
